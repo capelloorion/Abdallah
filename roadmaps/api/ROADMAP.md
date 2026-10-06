@@ -89,20 +89,31 @@ human steps listed on each item.
 
 ### 1.3 — Threat model: shared conversation content
 
-- **status:** todo
+- **status:** done
 - **depends_on:** []
 - **layers:** [docs]
 - **acceptance:**
   - `docs/security/threat-models/shared-conversations.md` exists (STRIDE, via the `threat-modeler` agent) covering: every user can read every conversation, content kept indefinitely, users pasting personal data or secrets into chat, content in Azure SQL
   - each threat has a mitigation or an explicitly accepted residual risk, and the document references ADR-0014
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - open `docs/security/threat-models/shared-conversations.md`: STRIDE threats S/T/Rp/I/D/E, an AI section, "what changes when Okta lands", residual risks R1–R6, proposed items P1–P6, open questions, review triggers
+  - check that every threat has a mitigation (with where it lives and its status) or an explicit accepted residual risk, and that ADR-0014 is referenced
+  - `docs/security/threat-models/README.md` lists it as "Draft (awaiting team acceptance)"
+  - `just fmt` is clean (docs only; no code or tests changed)
 - **needs_human:**
-  - the team reads it and accepts the residual risks (retention, a UI notice that chats are shared) — this gates 2.2, which is the first item that stores content
+  - the team reads the document and accepts or changes the residual risks R1–R6 (shared visibility, no rate limit/paging/body limit, indefinite retention, PII notice wording, stored wrong answers, content reaching Foundry/Search), then changes its status from Draft to Accepted — **api 2.2 must not start before this**
+  - decide the PII notice wording (proposed in section 9; it is the text web 4.1 will show)
+  - verify what the threat model could not: Foundry/Search prompt and query retention, database backup retention, whether the OTel instrumentors capture bound parameters or request bodies, and that no BFF rate or body limit exists
+  - infra/network (for the infra layer, not edited here): the web app has `externalIngress: true` and the SQL server has a public endpoint plus the `AllowAllWindowsAzureIps` rule, so "internal-only" depends on the cloud team's network posture
 - **notes:**
   - 2026-10-06 — planned from the review's "threat models to write".
 
 ## Phase 2 — Grounded answers (F1)
+
+- 2026-10-06 — started by Claude
+  - 2026-10-06 — written by the `threat-modeler` agent; awaiting test by the developer. Files: `docs/security/threat-models/shared-conversations.md`, `docs/security/threat-models/README.md`. Code facts I re-checked: neither engine sets `hide_parameters` (SQLAlchemy errors can include bound parameters, i.e. titles or questions); web ingress is external and api ingress internal; SQL has a public endpoint and `AllowAllWindowsAzureIps`. No code reviewer or security-review run: this item is documentation and is itself the security analysis.
+  - 2026-10-06 — the threat model proposes six items that are in NO roadmap yet (P1 `hide_parameters` + a no-content-in-errors canary; P2 rate limit + list cursor; P3 operator purge runbook for the SQL tables; P4 request-body size limit; P5 optional secret screening; P6 CSP/security headers + render tests). Re-run `/plan-roadmap api` (and web/infra) to turn them into items.
+  - 2026-10-06 — confirmed by the developer (done). The document is still Draft: the team's acceptance of R1–R6 (needs_human above) gates api 2.2.
 
 ### 2.1 — Citation contract: document titles on sources
 
@@ -141,6 +152,7 @@ human steps listed on each item.
 - **notes:**
   - 2026-10-06 — planned. Open: Q5 (status code for a long question) and Q6 (`token_count` meaning; default to output tokens until decided).
   - 2026-10-06 — from the 1.1 security review: `content` is `nvarchar(max)` with no database-side limit, so the 4,000-character question limit MUST be enforced in the request model, and the stored answer length bounded; validate that `citations` is an array of `{title, path}` before storing (the database only checks `ISJSON`).
+  - 2026-10-06 — from the shared-conversations threat model (api:1.3): this item may not start until the team has accepted that document. Acceptance must also carry: question cap in the request model, bounded stored answer length, strict `citations` validation with a `path` format check, history sent to the model only as human/assistant messages, citations only from retrieval, injection eval cases, and no content in telemetry. Do P1 (`hide_parameters=True` on both engines) before this merges, so a failed insert cannot put a title or question into an exception.
 
 ### 2.3 — Follow-up-aware retrieval
 
@@ -178,6 +190,8 @@ human steps listed on each item.
   - 2026-10-06 — planned. The web BFF hop timeout must exceed the api's 60 s (web roadmap).
 
 ## Phase 4 — Knowledge base (F3)
+
+- 2026-10-06 — from the api:1.3 threat model: carry the same write-side mitigations as 2.2, plus the disconnect-before-done behaviour.
 
 ### 4.1 — Threat model: knowledge-base ingestion
 
