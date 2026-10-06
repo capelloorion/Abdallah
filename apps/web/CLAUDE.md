@@ -42,9 +42,19 @@ URL.
   An api error before the stream keeps its status (only `error` + `trace_id` relayed); an unreachable api is
   a `502` carrying an `error` frame. Mock mode streams `askStreamFrames` (`askStreamErrorFrames` for a
   `[mock:error]` question).
-- `src/components/chat/` — `ChatThread`, `MessageInput`, `ChatPanel` (Tailwind, RTL-tested).
+- `src/components/chat/` — `ChatThread`, `MessageInput`, `ChatPanel` (Tailwind, RTL-tested). A message carries
+  `citations: [{ title, path }]` and, on failure, `error` (a short code) + `traceId`. `ChatThread` shows a
+  **Sources** block (title, then path) as soon as the `sources` frame arrives, and a red line with the code and
+  trace id on failure — a failed answer with nothing to show is just that line, and a cut-off answer keeps its
+  text and is marked incomplete. **Titles, paths and codes are document/server content: render them as text only —
+  never `dangerouslySetInnerHTML`, never a link target** (threat model `shared-conversations` T5).
 - `src/lib/stream.ts` (`streamUpstream`/`proxyStream`), `src/lib/sse.ts` (frame parser/builder),
-  `src/lib/chat-client.ts` (`askStream`, browser → BFF), `src/lib/mocks.ts`
+  `src/lib/chat-client.ts` (`askStream`, browser → BFF: hands over `citations`, reports every failure once as
+  `{ code, traceId }` — from the api's JSON `{ error, trace_id }`, the BFF `502` event-stream `error` frame or an
+  in-stream `error` frame, trace id from the body else the `x-trace-id` header, codes checked against a strict
+  pattern — and treats a stream that ends with no `done`/`error` as a failure, `stream_ended`; `parseCitations`
+  keeps only well-formed entries, at most 50, fields at most 500 characters, with control/zero-width/bidi characters
+  stripped; only a same-origin path is accepted as the endpoint; bounded reads — see the changelog), `src/lib/mocks.ts`
   (`isMockUpstream`/`mockJson`/`mockSse`), `src/lib/api-types.ts` (**generated** — `make openapi`).
 - `src/lib/trace.ts` — `withBff` (adopt/generate `x-trace-id`, run inside the `AsyncLocalStorage`
   store, echo the header on the response, record the request-duration metric — pass

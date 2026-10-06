@@ -91,7 +91,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 2.1 — Citations and error details in the chat client and thread
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [1.2]
 - **layers:** [ui]
 - **acceptance:**
@@ -100,11 +100,23 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - `ChatThread` renders a **Sources** block under each assistant message (title, then path) as soon as the `sources` frame arrives, and a red line with the error code and `trace_id` under the last user message on failure
   - existing chat component and client tests are updated and green; new cases cover citations and both error paths
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **392 passed** (api: 350 passed); the rewritten/new tests are `src/lib/chat-client.test.ts`, `src/lib/sse.test.ts`, `src/components/chat/ChatThread.test.tsx`, `ChatPanel.test.tsx`
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` lists `○ /chat`
+  - by hand, mock mode (`MOCK_UPSTREAM=true` in `apps/web/.env.local`, `pnpm -C apps/web dev`, open http://localhost:3000/chat — it uses the template's example route and mock):
+    - ask anything → the answer streams in word by word, and a **Sources** block appears under it listing each source as its title, then its path (as plain text, not a link)
+    - the red line: stop the dev server mid-answer, or ask with the api unreachable and `MOCK_UPSTREAM` off → a red line "Something went wrong (…) Trace id: …" (or "The answer is incomplete (…)" when part of the answer arrived), and you can ask again
+  - the BFF behaviour behind it was checked in web 1.2 (`[mock:error]` in a question ends in an `error` frame)
 - **needs_human:**
-  - none
+  - look at `/chat` in a browser once (the page is under the manual Playwright smoke by design): the Sources block, the red line, and that long or odd titles wrap sensibly on a phone-width window
 - **notes:**
   - 2026-10-06 — planned. `ChatPanel` is the reference shape; this item changes its message type, not its layout.
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/web/src/lib/chat-client.ts` (`Citation`, `StreamError`, `parseCitations`, failure reading, bounds), `apps/web/src/lib/sse.ts` (frame-size cap), `apps/web/src/components/chat/{ChatThread,ChatPanel,types}.tsx|ts`, `apps/web/src/mocks/assistant.ts` (the example mock now streams `citations`), tests, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.3.0 → 0.4.0. `onError` now takes `{ code, traceId }` and `ChatMessage` has `citations`/`traceId` instead of `sources` — `ChatPanel` is the only consumer.
+  - 2026-10-06 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: title and path no longer run together for assistive tech, bidi/zero-width/control characters stripped and each field isolated in `<bdi>`, abort on unmount and patch-by-id (no more "last message" race), a cancelled half answer is marked incomplete, browser-side bounds (answer length, SSE frame size, error body, error events), same-origin endpoint only, body cancelled after a terminal frame, and tests for signal forwarding and cancellation.
+  - 2026-10-06 — for web 2.3/2.4 (conversation UI): render history titles, messages and citations through the same text-only path AND run `parseCitations` on citations loaded from `GET /conversations/{id}`; never render an `error`/`traceId` that comes from stored data (the red line is for the live request only); never derive the `endpoint` from server or stored data; link a path only through an allow-list (relative, no scheme, no `..`), with a test.
+  - 2026-10-06 — design gap, for the api (not fixable in the client): the answer's inline `[n]` markers index the retrieved CHUNKS, but citations are unique DOCUMENTS, so the numbers cannot be shown against the Sources block without misleading (several chunks can come from one document). The Sources block is therefore unnumbered. A clean fix needs the api to say which chunk numbers each citation covers (for example `citations[].chunks: [1, 3]`); worth an api roadmap item.
+  - 2026-10-06 — still not built (threat model P2/P6): a CSP and security headers on the BFF, and a Stop button (the input is disabled while an answer streams, so a stalled stream holds the page busy until the 300 s bound or until you leave).
+  - 2026-10-06 — confirmed by the developer (done). The browser look at `/chat` (needs_human above) is still theirs to do.
 
 ### 2.2 — ConversationList component
 
@@ -138,6 +150,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - run the manual Playwright smoke for `/chat` once (page tests are manual per rule 40)
 - **notes:**
   - 2026-10-06 — planned.
+  - 2026-10-06 — from web 2.1: history must go through `parseCitations` and be rendered as text only; never show a stored message's content as an error line; see the web 2.1 notes.
 
 ### 2.4 — Send a question in a conversation
 

@@ -7,6 +7,50 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-06
+
+### Added
+
+- **Citations in the chat UI** (roadmap web 2.1): `ChatMessage.citations` (`[{ title, path }]`) replaces `sources`
+  (`string[]`), and `askStream`'s `onSources`/`onDone` hand the citations over. `ChatThread` shows a **Sources** block
+  — title, then path, as plain text only — as soon as the `sources` frame arrives. `parseCitations()` keeps only
+  well-formed entries (at most 50, each field at most 500 characters).
+- **Error details**: `askStream`'s `onError` now receives `{ code, traceId }`. A failure before the stream starts
+  surfaces the api's `error` and `trace_id` (JSON body), or the `error_kind` in the BFF's `502` event-stream body
+  (api unreachable); an in-stream `error` frame surfaces `error_kind`; the trace id comes from the body, else the
+  `x-trace-id` header. Codes and trace ids are validated against strict patterns before they are shown. `ChatThread`
+  shows a red line with the code and trace id; a failed answer with nothing to show is just that line, and a
+  partial answer is kept and marked incomplete.
+
+### Changed
+
+- A stream that ends without a `done` or `error` frame is now a failure (`stream_ended`) instead of a silent
+  "done", so a cut-off answer is never shown as complete.
+- A cancelled request is handled honestly: the page now aborts its request when it is left (which lets the api stop the
+  model call); a half answer is kept and marked incomplete (`aborted`), and an empty placeholder is removed. `ChatPanel`
+  patches ITS OWN message by id, never "the last one", so a late callback can never land on a newer answer.
+- The template's example `/api/v1/assistant/ask/stream` mock now streams `citations` like the api.
+- **Internal API change**: `StreamHandlers.onError` takes `{ code, traceId }` instead of a string, and `ChatMessage`
+  has `citations`/`traceId` instead of `sources`. Only the chat components use them.
+
+### Hardening from review
+
+- Control, zero-width and bidi-override characters are stripped from citation titles and paths (a title that is nothing
+  but those falls back to the file name), and each is rendered in its own `<bdi>` with a space between them, so a
+  disguised title cannot reorder or hide the path next to it.
+- Browser-side bounds: an answer is capped at 100,000 characters (`answer_too_long`, the text so far is kept), an SSE
+  frame that never ends is refused after 1,000,000 characters (`stream_error`), an error body is read only up to 4 KB, and
+  a failed response's event stream is read for at most 20 events.
+- `askStream` only accepts a same-origin path (one leading `/`, no scheme or host, no whitespace): anything else is
+  `bad_endpoint` and nothing is sent. The response body is cancelled once a terminal frame has been read.
+
+### Tests
+
+- `src/lib/chat-client.test.ts`, `ChatThread.test.tsx`, `ChatPanel.test.tsx` rewritten and `sse.test.ts` extended: citations,
+  every failure path (JSON error, BFF 502 stream, error frame, cut-off stream, network, abort), unsafe codes and trace ids,
+  hostile titles/paths rendered as inert text, bidi/zero-width stripping, the size bounds, endpoint refusal, abort on
+  unmount, sources shown before the first token. Each new check was proven by removing it and watching its tests fail.
+
 ## [0.3.0] — 2026-10-06
 
 ### Added

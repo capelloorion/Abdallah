@@ -19,9 +19,15 @@ export const askFixture: AskResponse = {
   sources: ['docs/api.md', 'docs/web.md'],
 };
 
-/** The frames apps/api `stream_answer()` would emit: sources → token* → done. */
+/** The citations the api now streams: `{ title, path }`, unique by path (the JSON fixture above keeps the old shape). */
+const citations = [
+  { title: 'The api service', path: 'docs/api.md' },
+  { title: 'The web app', path: 'docs/web.md' },
+];
+
+/** The frames apps/api `stream_answer()` emits: sources → token* → done (both carry `citations`). */
 export const askStreamFrames: string[] = [
-  sseFrame('sources', { sources: askFixture.sources, count: 2 }),
+  sseFrame('sources', { citations, count: 2 }),
   ...askFixture.answer.split(' ').map((word) => sseFrame('token', { text: `${word} ` })),
-  sseFrame('done', { sources: askFixture.sources, input_tokens: 42, output_tokens: 24 }),
+  sseFrame('done', { citations, input_tokens: 42, output_tokens: 24 }),
 ];

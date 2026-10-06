@@ -41,6 +41,9 @@ export function parseSseBlock(block: string): SseEvent | null {
   return { event, data: data.join('\n') };
 }
 
+/** The most one unterminated SSE frame may buffer before the stream is refused. */
+export const MAX_SSE_BUFFER_CHARS = 1_000_000;
+
 /** Iterate the events of an SSE body stream. */
 export async function* readSseStream(
   body: ReadableStream<Uint8Array>,
@@ -60,6 +63,10 @@ export async function* readSseStream(
         const event = parseSseBlock(block);
         if (event) yield event;
         boundary = buffer.indexOf('\n\n');
+      }
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error('SSE frame exceeds the size limit');
       }
     }
     buffer += decoder.decode();
