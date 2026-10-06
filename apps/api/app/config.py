@@ -10,8 +10,10 @@ Shared monorepo contract:
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -128,3 +130,33 @@ def get_settings() -> Settings:
         # Empty/missing = no external database; there is deliberately no placeholder.
         external_database_url=(os.getenv("EXTERNAL_DATABASE_URL") or "").strip() or None,
     )
+
+
+UNPARSEABLE_TARGET = "<unparseable DATABASE_URL>"
+_HOST = re.compile(r"^[A-Za-z0-9.-]{1,255}$|^[0-9A-Fa-f:.]{2,45}$")  # DNS name, IPv4 or IPv6
+_DATABASE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+def describe_database_target(url: str) -> str:
+    """``host:port/database`` of a database URL — safe to print or log.
+
+    An ALLOW-LIST, not a redaction: it prints only a host, a port and a database name that match
+    strict patterns, and ANYTHING else — no ``//`` authority, no host, an odd path, a bare ODBC
+    string, a password that broke the parse — becomes a constant. So a malformed URL can never put
+    a user, a password or a query string into a log line. Used by the CLI tools (Alembic) to say
+    WHICH database they are about to touch.
+    """
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return UNPARSEABLE_TARGET
+    database = parts.path[1:] if parts.path.startswith("/") else parts.path
+    if not (parts.scheme and parts.netloc and host and _HOST.match(host)):
+        return UNPARSEABLE_TARGET
+    if database and not _DATABASE.match(database):
+        return UNPARSEABLE_TARGET  # e.g. "db;PWD=x", "S3cret@host/db": show none of it
+    shown_host = f"[{host}]" if ":" in host else host
+    shown_port = f":{port}" if port else ""
+    return f"{shown_host}{shown_port}/{database}" if database else f"{shown_host}{shown_port}"

@@ -368,3 +368,71 @@ def test_retriever_titles_are_cleaned_and_capped_on_read() -> None:
 def test_load_path_drops_a_utf8_bom(tmp_path: Path) -> None:
     (tmp_path / "a.md").write_bytes(b"\xef\xbb\xbf# Titled\n")
     assert ingest.load_path(tmp_path)[0].text == "# Titled\n"
+
+
+# ── the ingest command reads apps/api/.env, like the service ─────────────────
+
+
+def test_ingest_main_loads_the_local_env_file_without_overriding_the_shell(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import os
+
+    import app.config as config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("AZURE_SEARCH_INDEX=from-file\nAZURE_SEARCH_ENDPOINT=from-file\n", "utf-8")
+    monkeypatch.setattr(config, "LOCAL_ENV_FILE", env_file)
+    # Record the original state first: the loader writes os.environ behind monkeypatch's back, and
+    # this restores it at teardown even if an assertion below fails.
+    monkeypatch.setenv("AZURE_SEARCH_INDEX", "x")
+    monkeypatch.delenv("AZURE_SEARCH_INDEX")
+    monkeypatch.setenv("AZURE_SEARCH_ENDPOINT", "from-shell")  # the shell must win
+    monkeypatch.setattr(ingest, "configure_logging", lambda: None)
+
+    async def fake_run(argv):
+        return ingest.IngestReport(documents=1, chunks=1, uploaded=1, failed=0)
+
+    monkeypatch.setattr(ingest, "run", fake_run)
+    monkeypatch.setattr(ingest.sys, "argv", ["ingest", "docs"])
+
+    ingest.main()
+
+    assert os.environ["AZURE_SEARCH_INDEX"] == "from-file"  # loaded from apps/api/.env
+    assert os.environ["AZURE_SEARCH_ENDPOINT"] == "from-shell"  # never overridden
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "index", "expected"),
+    [
+        (
+            "https://srch-dev.search.windows.net",
+            "team-assistant-docs",
+            "srch-dev.search.windows.net/team-assistant-docs",
+        ),
+        ("https://srch-dev.search.windows.net/", "docs_v2", "srch-dev.search.windows.net/docs_v2"),
+        (
+            "https://u:S3cret@srch-dev.search.windows.net",
+            "docs",
+            "srch-dev.search.windows.net/docs",
+        ),
+        ("", "docs", "<search endpoint or index not set>"),
+        ("https://srch-dev.search.windows.net", "", "<search endpoint or index not set>"),
+        (
+            "https://srch-dev.search.windows.net",
+            "docs;key=S3cret",
+            "<search endpoint or index not set>",
+        ),
+        ("not a url S3cret", "docs", "<search endpoint or index not set>"),
+    ],
+)
+def test_describe_search_target_names_the_service_and_index_only(
+    monkeypatch: pytest.MonkeyPatch, endpoint: str, index: str, expected: str
+) -> None:
+    from app.ai.config import get_ai_settings
+
+    monkeypatch.setenv("AZURE_SEARCH_ENDPOINT", endpoint)
+    monkeypatch.setenv("AZURE_SEARCH_INDEX", index)
+    described = ingest.describe_search_target(get_ai_settings())
+    assert described == expected
+    assert "S3cret" not in described

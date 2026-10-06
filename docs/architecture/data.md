@@ -248,7 +248,9 @@ models claim.
 (`alembic init -t async`, Alembic 1.20), adapted in three ways worth knowing:
 
 - **The URL comes from `app.config.get_settings().database_url`** — the same `DATABASE_URL` the
-  service uses — never from `alembic.ini`. A URL committed to the ini is a review-blocking
+  service uses — never from `alembic.ini`. `env.py` also reads the optional `apps/api/.env`
+  (`load_local_env()`, never overriding the shell or CI) and logs the target as
+  `host:port/database` — never credentials — with a warning when it is still the placeholder. A URL committed to the ini is a review-blocking
   violation, and `tests/test_alembic.py` asserts the ini has none.
 - **`target_metadata = Base.metadata`** with `compare_type=True`, so autogenerate diffs the
   imported models against the database, including column type changes.

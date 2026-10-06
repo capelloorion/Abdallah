@@ -16,8 +16,10 @@ uv sync
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-(`apps/api/.env` — a copy of `.env.example` — is **optional**: `app.main` loads it via
-`load_local_env()` when it exists and never overrides ambient env. No `--env-file` flag is
+(`apps/api/.env` — a copy of `.env.example` — is **optional**: `app.main`, `alembic` and
+`python -m app.ai.ingest` all load it via `load_local_env()` when it exists and never override
+ambient env (a value already set in your shell wins — and so does one that is set but empty:
+unset it, or the file's value is hidden). No `--env-file` flag is
 needed; the root `make dev` / `just dev` script works without a `.env`.)
 
 Endpoints:

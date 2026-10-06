@@ -83,3 +83,74 @@ class TestLoadLocalEnv:
         assert config.LOCAL_ENV_FILE.name == ".env"
         assert config.LOCAL_ENV_FILE.parent.name == "api"
         assert (config.LOCAL_ENV_FILE.parent / ".env.example").is_file()
+
+
+# ── describe_database_target: an allow-list, safe to print ─────────────────────
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "mssql+aioodbc://user:s3cret@sql-dev.database.windows.net:1433/teamdb"
+            "?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes",
+            "sql-dev.database.windows.net:1433/teamdb",
+        ),
+        ("mssql+aioodbc://u:p@host.invalid/db", "host.invalid/db"),
+        ("mssql+aioodbc://u:p@host.invalid:1433", "host.invalid:1433"),
+        ("mssql+aioodbc://u:p@host.invalid/db?PWD=S3cret&Authentication=X", "host.invalid/db"),
+        ("mssql+aioodbc://u:p%40ss@host.invalid:1433/db", "host.invalid:1433/db"),
+        ("mssql+aioodbc://u:p@ss@host.invalid:1433/db", "host.invalid:1433/db"),
+        (
+            "mssql+aioodbc://app-id@host.invalid:1433/db?Authentication=ActiveDirectoryMsi",
+            "host.invalid:1433/db",
+        ),
+        ("mssql+aioodbc://u:p@[::1]:1433/db", "[::1]:1433/db"),
+    ],
+)
+def test_describe_database_target_shows_only_host_port_and_database(
+    url: str, expected: str
+) -> None:
+    described = config.describe_database_target(url)
+    assert described == expected
+    for secret in (
+        "s3cret",
+        "S3cret",
+        "p%40ss",
+        "ss@",
+        "user",
+        "Authentication",
+        "driver=",
+        "app-id",
+    ):
+        assert secret not in described
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "S3cret",
+        "not a url S3cret",
+        "user:S3cret",  # a scheme-less pair parses as scheme + path
+        "mssql+aioodbc:user:S3cret@host/db",  # a single-slash typo: no authority
+        "Driver={ODBC Driver 18};UID=u;PWD=S3cret",  # a bare ODBC connection string
+        "mssql+aioodbc://host/db;PWD=S3cret",  # a keyword smuggled into the path
+        "mssql+aioodbc://u:12/S3cret@host/db",  # an unencoded '/' split the password
+        "mssql+aioodbc:///db_S3cret",  # no host
+        "mssql+aioodbc://u:S3cret@/db",  # no host
+        "mssql+aioodbc://u:p@host:notaport/db_S3cret",  # unparseable port
+        "mssql+aioodbc://u:p@ho st/db_S3cret",  # a space in the host
+        "mssql+aioodbc://u:p@host.invalid/db%0aS3cret",  # an encoded newline in the database
+    ],
+)
+def test_describe_database_target_never_echoes_a_malformed_url(url: str) -> None:
+    described = config.describe_database_target(url)
+    assert described == config.UNPARSEABLE_TARGET
+    assert "S3cret" not in described
+
+
+def test_the_placeholder_url_describes_as_the_placeholder_host() -> None:
+    assert config.describe_database_target(config.DEFAULT_DATABASE_URL) == (
+        "your-server.database.windows.net:1433/your-database"
+    )

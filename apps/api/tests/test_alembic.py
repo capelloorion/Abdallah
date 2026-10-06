@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,14 @@ TEST_URL = (
 
 def _config(output: io.StringIO | None = None) -> Config:
     return Config(str(INI), output_buffer=output, stdout=io.StringIO())
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """env.py now reads apps/api/.env; these tests must never see a developer's real one."""
+    import app.config as config
+
+    monkeypatch.setattr(config, "LOCAL_ENV_FILE", tmp_path / "absent.env")
 
 
 @pytest.fixture()
@@ -76,6 +85,8 @@ def test_env_py_reads_url_from_settings_and_targets_base_metadata() -> None:
     source = ENV_PY.read_text(encoding="utf-8")
     compile(source, str(ENV_PY), "exec")  # syntactically valid
     assert "get_settings().database_url" in source
+    assert "load_local_env()" in source  # reads apps/api/.env like the service
+    assert "describe_database_target" in source  # and says which database it will use
     assert "target_metadata = Base.metadata" in source
     assert "import app.models" in source
     assert 'config.get_main_option("sqlalchemy.url")' not in source
@@ -154,3 +165,104 @@ def test_migration_matches_the_models(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(expected) == 3  # conversations, messages, ix_messages_conversation_id
     for statement in expected:
         assert statement in migration_sql, statement
+
+
+# ── apps/api/.env is read by the CLI, like the service ───────────────────────
+
+
+def _track_env(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """Make monkeypatch restore `name` at teardown even if the loader sets it behind its back.
+
+    `load_dotenv` writes to os.environ directly; recording the original state up front means the
+    variable is cleaned up whether or not the test's assertions pass.
+    """
+    monkeypatch.setenv(name, "x")
+    monkeypatch.delenv(name)
+
+
+def _offline_upgrade() -> str:
+    output = io.StringIO()
+    command.upgrade(_config(output), "head", sql=True)
+    return output.getvalue()
+
+
+@pytest.mark.usefixtures("_restore_logging")
+def test_alembic_reads_database_url_from_the_local_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import app.config as config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"DATABASE_URL={TEST_URL}\n", encoding="utf-8")
+    monkeypatch.setattr(config, "LOCAL_ENV_FILE", env_file)
+    _track_env(monkeypatch, "DATABASE_URL")
+    monkeypatch.setattr(pyodbc, "connect", lambda *a, **k: pytest.fail("offline must not connect"))
+
+    assert "CREATE TABLE conversations" in _offline_upgrade()
+    assert os.environ["DATABASE_URL"] == TEST_URL  # it came from the file, not the shell
+    err = capsys.readouterr().err
+    assert "Target database: db.invalid:1433/app (URL from apps/api/.env" in err
+    assert "u:p" not in err and "Encrypt" not in err and "driver" not in err  # no credentials
+
+
+@pytest.mark.usefixtures("_restore_logging")
+def test_the_shell_environment_wins_over_the_local_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import app.config as config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("DATABASE_URL=mssql+aioodbc://file:file@file.invalid/filedb\n", "utf-8")
+    monkeypatch.setattr(config, "LOCAL_ENV_FILE", env_file)
+    monkeypatch.setenv("DATABASE_URL", TEST_URL)
+
+    _offline_upgrade()
+    assert os.environ["DATABASE_URL"] == TEST_URL  # a shell/CI value is never overridden
+    err = capsys.readouterr().err
+    assert "db.invalid:1433/app (URL from the environment" in err
+    assert "file.invalid" not in err
+
+
+@pytest.mark.usefixtures("_restore_logging")
+def test_an_empty_shell_variable_also_hides_the_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Standard dotenv semantics: a variable that is SET (even to "") is not overridden.
+
+    The symptom is "it is in .env but not read" — so the warning says to unset the empty one.
+    """
+    import app.config as config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"DATABASE_URL={TEST_URL}\n", encoding="utf-8")
+    monkeypatch.setattr(config, "LOCAL_ENV_FILE", env_file)
+    monkeypatch.setenv("DATABASE_URL", "")
+
+    _offline_upgrade()
+    err = capsys.readouterr().err
+    assert "built-in placeholder" in err and "EMPTY in the shell" in err
+    assert "db.invalid" not in err
+
+
+@pytest.mark.usefixtures("_restore_logging")
+def test_a_missing_local_env_file_falls_back_to_the_placeholder_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import app.config as config
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)  # no file (autouse fixture), no env
+    assert "CREATE TABLE conversations" in _offline_upgrade()
+    assert config.get_settings().database_url == config.DEFAULT_DATABASE_URL
+    err = capsys.readouterr().err
+    assert "Target database: your-server.database.windows.net:1433/your-database" in err
+    assert "URL from the built-in placeholder" in err
+    assert "DATABASE_URL is the built-in placeholder" in err
+
+
+@pytest.mark.usefixtures("_restore_logging")
+def test_a_real_url_does_not_trigger_the_placeholder_warning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", TEST_URL)
+    _offline_upgrade()
+    assert "placeholder" not in capsys.readouterr().err.replace("built-in placeholder host", "")

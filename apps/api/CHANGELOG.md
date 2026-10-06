@@ -7,6 +7,29 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-10-06
+
+### Fixed
+
+- **`alembic` and `python -m app.ai.ingest` now read `apps/api/.env`**, like the service. Only `app.main` called
+  `load_local_env()`, so running Alembic from a terminal ignored the file and fell back to the placeholder URL
+  (the symptom: a connection timeout to `your-server.database.windows.net`, or "set in .env but not read").
+  Same rules as before: a value already in the shell or CI environment wins — including one that is set but
+  empty — and a missing file is a no-op.
+
+### Added
+
+- `alembic/env.py` logs **which database it will use** — `host:port/database`, where the URL came from (the
+  environment, `apps/api/.env` or the built-in placeholder) and `APP_ENV` — and warns when `DATABASE_URL` is
+  still the placeholder. The ingest command logs the Search `host/index` it will write to.
+- `app.config.describe_database_target()` and `app.ai.ingest.describe_search_target()`: **allow-lists**, not
+  redactions — only a strictly matching host, port and database/index name is ever printed, and anything else
+  (a malformed URL, a bare ODBC string, a password that broke the parse) becomes a constant, so a typo in a URL
+  can never put credentials into a log line.
+- Tests: `.env` loading for Alembic (file used, shell wins, empty shell variable hides the file, missing file →
+  placeholder + warning) and for the ingest command; the description helpers never echo malformed input; the
+  Alembic tests never load a developer's `.env` file.
+
 ## [0.6.0] — 2026-10-06
 
 ### Changed

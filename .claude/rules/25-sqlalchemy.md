@@ -70,7 +70,7 @@ asyncio as sa_asyncio`), never `from sqlalchemy.ext.asyncio import create_async_
 ## Alembic (`alembic.ini`, `alembic/`)
 
 - **The URL is never in `alembic.ini`.** `env.py` reads `get_settings().database_url`
-  (env `DATABASE_URL`). Committing a URL there is a review-blocking violation.
+  (env `DATABASE_URL`; it also loads the optional `apps/api/.env` like the service, and logs the target `host:port/database`). Committing a URL there is a review-blocking violation.
 - `env.py` is the **async template** (`create_async_engine` + `run_sync`); keep
   `target_metadata = Base.metadata` and `compare_type=True`.
 - **Offline first:** review SQL with `uv run alembic upgrade head --sql` (no DB needed; renders

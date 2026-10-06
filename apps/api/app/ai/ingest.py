@@ -28,6 +28,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from langchain_core.embeddings import Embeddings
 
@@ -44,6 +45,7 @@ from app.ai.tools.retrieve import (
     clean_title,
     fallback_title,
 )
+from app.config import load_local_env
 from app.logging_config import configure_logging, get_logger
 
 CHUNK_INDEX_FIELD = "chunk_index"
@@ -197,6 +199,24 @@ def build_index(name: str, dimensions: int) -> Any:
     return SearchIndex(name=name, fields=fields, vector_search=vector_search)
 
 
+def describe_search_target(settings: AISettings) -> str:
+    """``host/index`` of the Azure AI Search service this run will WRITE to — safe to log.
+
+    The same allow-list idea as `app.config.describe_database_target`: a host name and an index
+    name, never a key, and a constant for anything that does not look like either.
+    """
+    try:
+        host = urlsplit(settings.search_endpoint or "").hostname or ""
+    except ValueError:
+        host = ""
+    index = settings.search_index or ""
+    if not re.fullmatch(r"[A-Za-z0-9.-]{1,255}", host) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,128}", index
+    ):
+        return "<search endpoint or index not set>"
+    return f"{host}/{index}"
+
+
 def build_index_client(settings: AISettings | None = None) -> Any:
     from azure.search.documents.indexes import SearchIndexClient
 
@@ -290,6 +310,7 @@ async def run(argv: Sequence[str] | None = None) -> IngestReport:
     settings = get_ai_settings()
     settings.require_search()
     settings.require_embeddings()
+    get_logger("app.ai.ingest").info("ingest target", target=describe_search_target(settings))
     index = build_index(settings.search_index or "", settings.embedding_dimensions)
     ensure_index(build_index_client(settings), index)
     return await ingest_documents(
@@ -303,6 +324,7 @@ async def run(argv: Sequence[str] | None = None) -> IngestReport:
 
 
 def main() -> None:
+    load_local_env()  # like app.main: read the optional apps/api/.env, never override the shell
     configure_logging()
     report = asyncio.run(run(sys.argv[1:]))
     print(

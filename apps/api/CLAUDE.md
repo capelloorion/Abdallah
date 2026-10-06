@@ -55,8 +55,10 @@ this as a starting map; read the actual files when you need detail.
   exit). See rule 60 → _Log pipeline_.
 - `config.py` — env-driven `Settings` (`APP_ENV`, `OTEL_SERVICE_NAME`, `PORT`, connection string,
   `DATABASE_URL` with the Azure SQL placeholder default, optional `EXTERNAL_DATABASE_URL`).
-  `load_local_env()` loads the OPTIONAL `apps/api/.env` at startup (no-op when absent, never
-  overrides ambient env) — no uvicorn `--env-file` flag anywhere.
+  `load_local_env()` loads the OPTIONAL `apps/api/.env` (no-op when absent, never overrides ambient
+  env) — called by `app.main` at startup, by `alembic/env.py` and by the ingest command's `main()`, so
+  all three read the same file; no uvicorn `--env-file` flag anywhere. `describe_database_target(url)` →
+  `host:port/database`, safe to print (Alembic logs it before it touches a database).
 - `db/` — the SQLAlchemy 2 **async** layer on **Azure SQL** (`mssql+aioodbc`, ADR-0008):
   `base.py` (`Base` + constraint naming convention), `engine.py` (`get_engine()` **lazy
   singleton**, `dispose_engine()`), `session.py` (`get_session()` FastAPI dependency — the ONLY
@@ -67,7 +69,8 @@ this as a starting map; read the actual files when you need detail.
 - `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; today `conversation.py`
   (`Conversation`, `Message` — the shared chat history, ADR-0014). Import new model modules in `models/__init__.py` so Alembic sees them.
 - `../alembic/` + `../alembic.ini` — Alembic (async `env.py`, URL from `DATABASE_URL` via
-  `app.config`, never from the ini); `versions/` holds `0001` — migrations are not run by the service or an agent.
+  `app.config`, never from the ini; it also reads `apps/api/.env` and logs the target `host:port/database`
+  and a warning if `DATABASE_URL` is still the placeholder); `versions/` holds `0001` — migrations are not run by the service or an agent.
 - `ai/` — the AI runtime (ADR-0009, rule 70): `config.py` (`AZURE_AI_*`/`AZURE_SEARCH_*`/`AI_*`),
   `client.py` (**the mock seam** — `get_chat_model()`/`get_embeddings()`, managed identity when
   deployed), `graph.py` (`build_graph()` → `retrieve → answer` LangGraph, `ask()`),

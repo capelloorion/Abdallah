@@ -21,6 +21,8 @@ Adapted from ``alembic init -t async`` (Alembic 1.20):
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -29,7 +31,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import app.models  # noqa: F401  — registers models on Base.metadata
-from app.config import get_settings
+from app.config import DEFAULT_DATABASE_URL, describe_database_target, get_settings, load_local_env
 from app.db.base import Base
 
 # Alembic Config object: access to alembic.ini values.
@@ -44,9 +46,40 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+log = logging.getLogger("alembic.env")
+
+
 def _database_url() -> str:
-    """The one place the URL is resolved — env-driven, never hard-coded."""
-    return get_settings().database_url
+    """The one place the URL is resolved — env-driven, never hard-coded.
+
+    Like the service (`app.main`), it also reads the optional `apps/api/.env` for local runs:
+    `load_local_env()` never overrides the shell or CI environment, and does nothing when the
+    file is absent (CI, Docker). It then says WHICH database it will use — host, port and database
+    name only, never credentials — and where the URL came from, so a migration is never run
+    against a surprise.
+    """
+    in_environment = bool(os.getenv("DATABASE_URL"))
+    load_local_env()
+    settings = get_settings()
+    url = settings.database_url
+    if in_environment:
+        source = "the environment"
+    elif os.getenv("DATABASE_URL"):
+        source = "apps/api/.env"
+    else:
+        source = "the built-in placeholder"
+    log.info(
+        "Target database: %s (URL from %s, APP_ENV=%s)",
+        describe_database_target(url),
+        source,
+        settings.app_env,
+    )
+    if url == DEFAULT_DATABASE_URL:
+        log.warning(
+            "DATABASE_URL is the built-in placeholder: set it in the shell or in apps/api/.env "
+            "(a variable that is set but EMPTY in the shell also hides the file's value)"
+        )
+    return url
 
 
 def run_migrations_offline() -> None:
