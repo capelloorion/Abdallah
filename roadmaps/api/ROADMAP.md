@@ -1,0 +1,234 @@
+# API roadmap — Team Assistant
+
+Schema: [`../README.md`](../README.md). Backend (`apps/api`): models, migrations, `/v1`
+endpoints, AI graphs/tools, ingestion.
+
+**Planned from (2026-10-06):** the team's draft Part B in `docs/architecture.md` (F1 chat with
+citations · F2 conversation history · F3 knowledge base) and the `/chat` wireframe in
+`docs/wireframe.md`, reviewed by `/architecture-review` the same day. `ARCHITECTURE.md` Part B and
+`docs/design/db-design.md` have **not** been updated yet — when the team applies them, re-run
+`/plan-roadmap api` and reconcile. The template already ships the `retrieve → answer` graph, SSE
+streaming (`app/ai/streaming.py`), the ingestion job, the error contract and an empty `/v1`
+router; these items only add what is missing.
+
+**Authoring never waits for Azure.** Models, hand-written migrations, endpoints and the AI graph
+changes are all testable offline (fake sessions, `GenericFakeChatModel`, `FakeRetriever`). Only
+_applying_ the migration, _running_ ingestion and a _real_ model answer need `infra:1.1` and the
+human steps listed on each item.
+
+## Open decisions (from the architecture review — they gate the items marked `blocked`)
+
+| #   | Decision                                                                                           | Gates          |
+| --- | -------------------------------------------------------------------------------------------------- | -------------- |
+| Q1  | Is `POST /v1/admin/ingest` mirrored by the web BFF, or CLI/server-only?                            | 4.1, 4.2, web  |
+| Q2  | Corpus delivery: different build context, pre-build copy of `docs/` into `apps/api`, or CI ingest? | 4.3 (ADR-0013) |
+| Q3  | Follow-up retrieval: last question only, previous turn + question, or a condense step?             | 2.3            |
+| Q4  | Corpus scope: only `docs/**/*.md`, or also `README.md` / `.claude/rules/`? Any off-limits files?   | 4.2            |
+| Q5  | Over-long question: `413 payload_too_large` (draft B4a) or `422 validation_error` (template)?      | 2.2, 3.1       |
+| Q6  | `messages.token_count`: input tokens, output tokens, or the sum?                                   | 2.2, 3.1       |
+
+## Phase 1 — Conversations (F2)
+
+### 1.1 — Conversation and Message models + migration
+
+- **status:** done
+- **depends_on:** []
+- **layers:** [model, migration, docs]
+- **acceptance:**
+  - `conversations` (`id`, `title nvarchar(200)`, `created_at`, `updated_at`) and `messages` (`id`, `conversation_id`, `role`, `content`, `citations`, `token_count`, `created_at`) exist exactly as specified in `docs/architecture.md` B4; UUID keys (`uniqueidentifier`), `datetime2(3)` UTC timestamps with server defaults
+  - `messages.conversation_id` is a foreign key to `conversations.id` with `NO ACTION`, indexed; `role` has a named `CHECK (role IN ('user','assistant'))`; `citations` is nullable with a named `CHECK (citations IS NULL OR ISJSON(citations)=1)`
+  - `content` and `citations` are `nvarchar(max)` by design; the exception to the length-on-every-string rule is written in `docs/design/db-design.md`, which also replaces its example diagram with the real tables
+  - the Alembic revision has a working downgrade; `alembic upgrade head --sql` and the downgrade SQL are generated and read as correct SQL Server DDL
+- **how_to_test:**
+  - `just test` — api: **216 passed** (web: 136 passed); the new tests are `apps/api/tests/test_models_conversation.py` and the rewritten `apps/api/tests/test_alembic.py`
+  - `uv run --directory apps/api alembic heads` → `0001 (head)`
+  - `uv run --directory apps/api alembic upgrade head --sql` → no database needed; the output holds `CREATE TABLE conversations`, `CREATE TABLE messages` (with `NVARCHAR(max)` for `content`/`citations`, `DATETIME2(3)`, the two named `CHECK`s and `ON DELETE NO ACTION`) and `CREATE INDEX ix_messages_conversation_id`
+  - `uv run --directory apps/api alembic downgrade head:base --sql` → `DROP INDEX`, `DROP TABLE messages`, `DROP TABLE conversations`, in that order
+  - open `docs/design/db-design.md`: the real tables, the diagram and the `nvarchar(max)` exception are there
+- **needs_human:**
+  - review the offline SQL, then apply with `migrate.yml` on `dev` (needs the `DEV_SQL_SERVER_FQDN` / `DEV_SQL_DATABASE` secrets and the contained SQL user)
+  - confirm the dev SQL server's firewall is not open to the whole internet (the developer said "all IPs are allowed"; `.claude/rules/50-security.md`)
+- **notes:**
+  - 2026-10-06 — planned by `/plan-roadmap api`. Conversations are shared (no owner column) per the draft B7 / ADR-0014 (Proposed).
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/api/app/models/conversation.py`, `apps/api/app/models/__init__.py`, `apps/api/alembic/versions/20261006_1232-0001_create_conversations_and_messages.py`, `apps/api/tests/test_models_conversation.py`, `apps/api/tests/test_alembic.py`, `docs/design/db-design.md`, `apps/api/CHANGELOG.md`, version 0.3.0 → 0.4.0 (`pyproject.toml`, `uv.lock` kept on lock revision 3 so the pinned uv 0.10.9 reads it), plus the docs that said "empty model set / no revisions". The migration was never applied and no database was contacted.
+  - 2026-10-06 — reviews run: `code-reviewer` (no code blockers; stale-doc, docstring and test nits fixed) and `security-reviewer` (no critical/high). Left for the team: `docs/architecture/ARCHITECTURE.md` Part A lines 108 and 194 still say "no models, no migrations by design" — template-owned, propose the edit rather than apply it.
+  - 2026-10-06 — confirmed by the developer (done). The migration is still not applied to any database; that stays a human step (needs_human above).
+
+### 1.2 — Conversation endpoints (create, list, get)
+
+- **status:** todo
+- **depends_on:** [1.1]
+- **layers:** [endpoint]
+- **acceptance:**
+  - `POST /v1/conversations` with optional `{title}` returns `201 {id, title, created_at, updated_at}`; a missing title becomes "New conversation"; a title over 200 characters returns `422 validation_error`
+  - `GET /v1/conversations?limit=50` (1–100) returns `200 {items: [{id, title, updated_at}], count}` newest `updated_at` first; a limit outside 1–100 returns `422 validation_error`
+  - `GET /v1/conversations/{id}` returns the conversation plus `messages: [{id, role, content, citations, created_at}]`, oldest first; an unknown id returns `404 not_found`, a malformed id `422 validation_error`
+  - every response echoes `x-trace-id`; errors use `{error, trace_id}`; no message content appears in logs, spans, metrics or events
+  - `docs/reference/openapi.json` and the web's `src/lib/api-types.ts` are regenerated (`just openapi`) so the web items can type their mocks against them
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - run the endpoints against the real dev database only after 1.1 is applied
+- **notes:**
+  - 2026-10-06 — planned. Tested with a fake session; no database needed.
+  - 2026-10-06 — from the 1.1 security review: `GET /v1/conversations/{id}` loads a whole history, so cap the number of messages returned (or paginate); titles are user content and appear in the list for everyone (ADR-0014).
+
+### 1.3 — Threat model: shared conversation content
+
+- **status:** todo
+- **depends_on:** []
+- **layers:** [docs]
+- **acceptance:**
+  - `docs/security/threat-models/shared-conversations.md` exists (STRIDE, via the `threat-modeler` agent) covering: every user can read every conversation, content kept indefinitely, users pasting personal data or secrets into chat, content in Azure SQL
+  - each threat has a mitigation or an explicitly accepted residual risk, and the document references ADR-0014
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the team reads it and accepts the residual risks (retention, a UI notice that chats are shared) — this gates 2.2, which is the first item that stores content
+- **notes:**
+  - 2026-10-06 — planned from the review's "threat models to write".
+
+## Phase 2 — Grounded answers (F1)
+
+### 2.1 — Citation contract: document titles on sources
+
+- **status:** todo
+- **depends_on:** []
+- **layers:** [ai]
+- **acceptance:**
+  - ingestion stores a `title` on every chunk (first `# ` heading of the file, else the file name); `build_index` defines the field
+  - the retriever returns the title with each chunk; the `sources` and `done` SSE frames and the JSON answer carry `citations: [{title, path}]`, unique by path, in retrieval order — instead of a list of path strings
+  - the system prompt still cites inline `[n]`; the eval cases in `tests/evals/cases.json` cover the citation shape and the "I do not know" answer when the context is empty
+  - retrieved text, titles and paths never appear in logs, spans, metrics or events
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - confirm index `team-assistant-docs` does not exist yet on the shared Search service; if it exists with the old schema, it must be updated or recreated (cloud team) — do this before the first ingestion run (4.2)
+- **notes:**
+  - 2026-10-06 — planned. The title field changes the index schema; the architecture review suggested a short amendment to ADR-0009 (not drafted).
+
+### 2.2 — Ask a question (JSON)
+
+- **status:** todo
+- **depends_on:** [1.2, 1.3, 2.1]
+- **layers:** [ai, endpoint]
+- **acceptance:**
+  - `POST /v1/conversations/{id}/ask` with `{question}` returns `200 {message_id, answer, citations}`
+  - the user message is stored before retrieval; the assistant message (content, citations as JSON, `token_count`) is stored after the answer; `conversations.updated_at` is set on both writes; a conversation still titled "New conversation" gets the first question cut to 200 characters
+  - the model receives the last 10 stored messages as history, plus retrieved context and the question, through `app.ai.graph.ask`
+  - an empty question returns `422 validation_error`; a question over 4,000 characters is rejected (`413 payload_too_large`, pending Q5); an unknown conversation returns `404 not_found`; a model or search failure returns `503 ai_unavailable`, the user message is kept and no assistant message is stored
+  - timeout 60 s; every response echoes `x-trace-id`; no content in any telemetry
+  - OpenAPI and `api-types.ts` regenerated
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - migration 1.1 applied on `dev`; `AZURE_AI_*` and `AZURE_SEARCH_*` values in `apps/api/.env` (secrets — not set by an agent)
+  - a populated index (after 4.2) for a real grounded answer
+- **notes:**
+  - 2026-10-06 — planned. Open: Q5 (status code for a long question) and Q6 (`token_count` meaning; default to output tokens until decided).
+  - 2026-10-06 — from the 1.1 security review: `content` is `nvarchar(max)` with no database-side limit, so the 4,000-character question limit MUST be enforced in the request model, and the stored answer length bounded; validate that `citations` is an array of `{title, path}` before storing (the database only checks `ISJSON`).
+
+### 2.3 — Follow-up-aware retrieval
+
+- **status:** blocked
+- **depends_on:** [2.2]
+- **layers:** [ai]
+- **acceptance:**
+  - a follow-up such as "And on the api side?" retrieves documents relevant to the conversation, not only to the last sentence, using the approach chosen in Q3
+  - the eval harness has a follow-up case that fails with last-question-only retrieval
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the team answers Q3 (a condense step adds a model call and a graph node)
+- **notes:**
+  - 2026-10-06 — blocked: Q3 undecided. The `retrieve` node searches on the last user message only (`app/ai/graph.py`), so the wireframe's own follow-up example would retrieve nothing relevant.
+
+## Phase 3 — Streaming
+
+### 3.1 — Ask a question (SSE stream)
+
+- **status:** todo
+- **depends_on:** [2.2]
+- **layers:** [ai, endpoint]
+- **acceptance:**
+  - `POST /v1/conversations/{id}/ask/stream` with `{question}` returns `200 text/event-stream` with frames `sources` → `token`\* → `done`, built on `app.ai.streaming`; `sources` and `done` carry `[{title, path}]`
+  - validation, `404` and any failure before the first frame return the normal JSON error body and status (`404 not_found`, `422`/`413`, `503 ai_unavailable`); a failure after the first frame sends `event: error {"error_kind": …}` and ends the stream; the user message is kept and no assistant message is stored
+  - the assistant message (content, citations, `token_count`) is stored before the `done` frame is sent; a client disconnect before `done` stores no assistant message
+  - the response carries the `x-trace-id` header (the error frame has no trace id; the UI reads the header)
+  - the SSE frames are documented in the OpenAPI response description
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the real-model run needs the same setup as 2.2
+- **notes:**
+  - 2026-10-06 — planned. The web BFF hop timeout must exceed the api's 60 s (web roadmap).
+
+## Phase 4 — Knowledge base (F3)
+
+### 4.1 — Threat model: knowledge-base ingestion
+
+- **status:** todo
+- **depends_on:** []
+- **layers:** [docs]
+- **acceptance:**
+  - `docs/security/threat-models/knowledge-base-ingest.md` exists (via the `threat-modeler` agent) covering: an unauthenticated, cost-bearing trigger; BFF exposure (Q1); prompt injection through a corpus anyone with repo access can edit; per-replica single-flight; everything under `docs/` readable by every user
+  - each threat has a mitigation or an accepted residual risk
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the team decides Q1 and accepts the residual risks; ADR-0015 moves from `Proposed` to `Accepted` or is revised
+- **notes:**
+  - 2026-10-06 — planned from the review's "threat models to write".
+
+### 4.2 — Ingest endpoint
+
+- **status:** todo
+- **depends_on:** [2.1, 4.1]
+- **layers:** [ai, endpoint]
+- **acceptance:**
+  - `POST /v1/admin/ingest` takes no body and returns `202 {"status": "started"}`; it runs the existing ingestion job (load → chunk → embed → upload, stable chunk ids) over the configured corpus path in the background
+  - while a run is in progress in the same process, a second call returns `409 ingest_running`; the guard is released when the run finishes or fails
+  - a failed run logs the outcome kind and counts only — no document text — and the next call can start a new run
+  - the route is under `/v1`, echoes `x-trace-id`, and is documented in OpenAPI; it is not added to the web BFF (per the review's recommendation, subject to Q1)
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - decide the corpus scope and path (Q4)
+  - request write access to the Search index for the api identity in `infra/grant-request.md`; the cloud team grants it
+  - run the first ingestion on `dev` and check the index
+- **notes:**
+  - 2026-10-06 — planned. The single-flight guard here is in process memory, so it holds per replica only (ADR-0015); 5.1 closes that.
+
+### 4.3 — Corpus inside the deployed api image
+
+- **status:** blocked
+- **depends_on:** [4.2]
+- **layers:** [infra, docs]
+- **acceptance:**
+  - the deployed api can read the agreed corpus at `/app/corpus`; the image build and the CI build step produce it from `docs/` using the approach chosen in Q2
+  - ADR-0013 is `Accepted` (or replaced) and `docker-compose.yml`, `apps/api/Dockerfile` and `apps/api/CLAUDE.md` match
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the team answers Q2
+- **notes:**
+  - 2026-10-06 — blocked: Q2 undecided. `docs/` is outside the api build context (`context: ./apps/api`, Dockerfile `COPY . /app`), so the draft's "bake into the image" cannot work as written. This is a Dockerfile/CI change, not Bicep.
+
+## Phase 5 — Hardening
+
+### 5.1 — Ingest single-flight across replicas
+
+- **status:** todo
+- **depends_on:** [4.2]
+- **layers:** [endpoint]
+- **acceptance:**
+  - with two api replicas running, only one ingestion runs at a time; a call to the other replica returns `409 ingest_running`
+  - the lock expires if the replica holding it dies, so a crashed run cannot block ingestion forever
+  - the mechanism chosen (SQL application lock or a lease row) is recorded in ADR-0015
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - a lease table would need a migration reviewed and applied with `migrate.yml`
+- **notes:**
+  - 2026-10-06 — planned. Must land before prod scales out: `main.prod.bicepparam` sets `apiReplicas` min 2.

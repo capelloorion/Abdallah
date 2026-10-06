@@ -14,7 +14,7 @@ paths:
 **SQLAlchemy 2.0.54 (asyncio) + aioodbc 0.5 / pyodbc 5.3 on Microsoft ODBC Driver 18 + Alembic
 1.20** against **Azure SQL Database**. **There is no local database, ever**; the project's
 database is created by the use-case Bicep deployment first (ADR-0012); **migrations are not run** by this project
-(the model set is a placeholder). Decided in
+(the model set is small: `conversations`, `messages`). Decided in
 [ADR-0008](../../docs/adr/0008-azure-sql-data-layer.md) (supersedes ADR-0004's driver choices).
 See [`apps/api/CLAUDE.md`](../../apps/api/CLAUDE.md) → _Database_.
 

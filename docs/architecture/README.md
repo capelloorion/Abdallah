@@ -1,11 +1,11 @@
 # Architecture
 
-The deep-dive layer of the AI Accelerator's documentation. The root
-[`README.md`](../../README.md) tells you **what the template is and how to run it**; these
+The deep-dive layer of the Team Assistant's documentation. The root
+[`README.md`](../../README.md) tells you **what the project is and how to run it**; these
 documents explain **how it is built and why**, in enough detail to change it safely.
 
-They describe the template itself — the placeholder names (`AI Accelerator`, `ai-accelerator`,
-`@ai-accelerator/*`) are intentional and stay until a project runs `/rename-project`.
+They describe the AI Accelerator baseline this project is built on; the project's own names
+(`Team Assistant`, `team-assistant`, `@team-assistant/*`) are used throughout.
 
 ## Start with the living document
 
@@ -19,14 +19,14 @@ deep-dives behind Part A.
 
 ## Documents
 
-| Document                             | What it covers                                                                                                                                                                                             |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](ARCHITECTURE.md)   | The living architecture: template baseline (Part A) + project architecture (Part B)                                                                                                                        |
-| [overview.md](overview.md)           | System context & containers, the two services, the BFF pattern and why, request flows, the monorepo-of-independent-packages rationale, what is deliberately absent                                         |
-| [tracing.md](tracing.md)             | The `trace_id` contract in depth: id anatomy, the adopt → store → forward → echo lifecycle, per-service implementations, and how it relates to the W3C/OTel trace id                                       |
-| [observability.md](observability.md) | The observability stack: init order, sampling, cloud role identity, the log pipeline, dependency spans, metrics & events, ingestion auth, degraded mode                                                    |
-| [data.md](data.md)                   | The data layer: SQLAlchemy 2 async + aioodbc + Alembic in `apps/api` on Azure SQL (never local), the read-only external engine, the database lifecycle, the empty model set and how to extend it, DB spans |
-| [ai.md](ai.md)                       | The AI runtime: LangChain + LangGraph on Azure AI Foundry, the client seam, the `retrieve → answer` graph, tools, prompts, telemetry, streaming, the Azure AI Search ingestion job, testing                |
+| Document                             | What it covers                                                                                                                                                                                       |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)   | The living architecture: template baseline (Part A) + project architecture (Part B)                                                                                                                  |
+| [overview.md](overview.md)           | System context & containers, the two services, the BFF pattern and why, request flows, the monorepo-of-independent-packages rationale, what is deliberately absent                                   |
+| [tracing.md](tracing.md)             | The `trace_id` contract in depth: id anatomy, the adopt → store → forward → echo lifecycle, per-service implementations, and how it relates to the W3C/OTel trace id                                 |
+| [observability.md](observability.md) | The observability stack: init order, sampling, cloud role identity, the log pipeline, dependency spans, metrics & events, ingestion auth, degraded mode                                              |
+| [data.md](data.md)                   | The data layer: SQLAlchemy 2 async + aioodbc + Alembic in `apps/api` on Azure SQL (never local), the read-only external engine, the database lifecycle, the model set and how to extend it, DB spans |
+| [ai.md](ai.md)                       | The AI runtime: LangChain + LangGraph on Azure AI Foundry, the client seam, the `retrieve → answer` graph, tools, prompts, telemetry, streaming, the Azure AI Search ingestion job, testing          |
 
 ## Related material
 

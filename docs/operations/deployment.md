@@ -28,7 +28,7 @@ request, deploy on merge behind the GitHub Environment's reviewers); developers 
   storage, the two container apps with the full env-var contract, the `grantRequest` output.
 - **Placeholders:** the four blocks marked ⚠ in `infra/modules/` carry an **assumed interface**
   until the infra team ships theirs; the three platform manifests hold placeholder names until
-  the cloud team's values are pasted in (`/init-project` asks for them).
+  the cloud team's values are pasted in.
 - **Not yet done anywhere:** a first real deployment (roadmap revision 2, item 6.2).
 
 ## Deploy flow

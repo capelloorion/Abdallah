@@ -1,8 +1,8 @@
 # apps/api — CLAUDE.md
 
-Python 3.14 + FastAPI service for the **AI Accelerator** (the brandless starter template
+Python 3.14 + FastAPI service for the **Team Assistant** (the brandless starter template
 Orion Digital Solutions built for the Diriyah Company AI team), managed by **uv**. Port **8000**,
-trace origin **`0c70`**, OTEL service `ai-accelerator-api`. Project-wide rules and the
+trace origin **`0c70`**, OTEL service `team-assistant-api`. Project-wide rules and the
 shared `trace_id` / observability contract live in the root [CLAUDE.md](../../CLAUDE.md) and
 [README.md](../../README.md); service overview in [README.md](README.md) (this folder). Treat
 this as a starting map; read the actual files when you need detail.
@@ -41,7 +41,7 @@ this as a starting map; read the actual files when you need detail.
   **`TELEMETRY_AUTH_MODE`** (`managed_identity` → Entra ID credential; a mistyped value
   disables observability VISIBLY — rule 60 → _Ingestion auth_). See
   `.claude/rules/60-observability.md`.
-- `metrics.py` — `get_meter(scope)` (namespaced `ai-accelerator.<scope>`, no-op when degraded),
+- `metrics.py` — `get_meter(scope)` (namespaced `team-assistant.<scope>`, no-op when degraded),
   `status_class`/`resolve_target` (bounded labels), starter instruments: request-duration +
   chain-hop histograms. **Bounded attributes only** — rule 60 → _Metrics & events_.
 - `events.py` — `track_event(name, attrs)` → App Insights `customEvents` (via the
@@ -62,10 +62,10 @@ this as a starting map; read the actual files when you need detail.
   singleton**, `dispose_engine()`), `session.py` (`get_session()` FastAPI dependency — the ONLY
   way routes get a handle on the project DB), `external.py` (second lazy **read-only** engine
   for `EXTERNAL_DATABASE_URL`: `get_external_session()`, non-SELECT statements refused).
-- `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; **empty placeholder** today
-  (one commented example). Import new model modules in `models/__init__.py` so Alembic sees them.
+- `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; today `conversation.py`
+  (`Conversation`, `Message` — the shared chat history, ADR-0014). Import new model modules in `models/__init__.py` so Alembic sees them.
 - `../alembic/` + `../alembic.ini` — Alembic (async `env.py`, URL from `DATABASE_URL` via
-  `app.config`, never from the ini); `versions/` is **empty** — migrations are not run.
+  `app.config`, never from the ini); `versions/` holds `0001` — migrations are not run by the service or an agent.
 - `ai/` — the AI runtime (ADR-0009, rule 70): `config.py` (`AZURE_AI_*`/`AZURE_SEARCH_*`/`AI_*`),
   `client.py` (**the mock seam** — `get_chat_model()`/`get_embeddings()`, managed identity when
   deployed), `graph.py` (`build_graph()` → `retrieve → answer` LangGraph, `ask()`),
@@ -99,7 +99,8 @@ this as a starting map; read the actual files when you need detail.
 - **Session per request** via `Depends(get_session)`; tests override it with
   `app.dependency_overrides[get_session]` and never need a database. External read-only data:
   `Depends(get_external_session)` (`EXTERNAL_DATABASE_URL`; unset ⇒ `ExternalDatabaseNotConfigured`).
-- **Alembic is wired, idle.** `alembic/versions/` is empty; the URL comes from `DATABASE_URL`
+- **Alembic is wired.** `alembic/versions/` holds revision `0001` (conversations + messages; applied
+  nowhere yet); the URL comes from `DATABASE_URL`
   through `app.config` (never `alembic.ini`). Autogenerate/`check` target the **dev** database;
   **applying is `.github/workflows/migrate.yml` (Environment-gated) or a named human** — agents
   only use offline/`heads`/`check` modes (root `CLAUDE.md` → _What you cannot do_).
@@ -115,7 +116,7 @@ uv sync
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 uv run ruff format app alembic tests && uv run ruff check app alembic tests
 uv run pytest                  # pytest + Starlette TestClient (--cov=app --cov-report=xml for coverage)
-uv run alembic heads                              # head revisions (none today)
+uv run alembic heads                              # head revisions (0001 today)
 uv run alembic upgrade head --sql                 # offline SQL for review (no DB)
 uv run alembic revision --autogenerate -m "<msg>" # needs a reachable dev DB
 uv run alembic check                              # model/migration drift (needs a DB)

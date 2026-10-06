@@ -2,8 +2,8 @@
 
 `apps/api` owns the database. It uses **SQLAlchemy 2.0 (asyncio)** on the **`mssql+aioodbc`**
 driver (aioodbc → pyodbc → Microsoft ODBC Driver 18 for SQL Server), with **Alembic** for
-migrations, against **Azure SQL Database** — and today it ships an **empty model set with no
-migrations run**, on purpose. A second, **read-only** engine can reach an external database the
+migrations, against **Azure SQL Database** — and today it ships two models (`conversations`, `messages`) and one revision, **never applied by
+this project**, on purpose. A second, **read-only** engine can reach an external database the
 project does not own.
 
 Two facts shape everything below. **There is no local database, ever** (team decision D2): the
@@ -36,10 +36,10 @@ flowchart LR
     xdb[("External Azure SQL<br/>SELECT-only login")]
 
     base["app/db/base.py<br/>Base(DeclarativeBase) + naming convention"]
-    models["app/models/<br/>2.0-style Mapped[] models (none yet)"]
+    models["app/models/<br/>2.0-style Mapped[] models (conversation.py)"]
     cli["alembic CLI<br/>revision · upgrade --sql · heads · check"]
     env["alembic/env.py<br/>async template — URL from DATABASE_URL via app.config"]
-    versions["alembic/versions/<br/>(empty)"]
+    versions["alembic/versions/<br/>(0001)"]
 
     route --> sess --> eng --> drv -.->|"DATABASE_URL"| db
     xroute --> xeng --> drv -.->|"EXTERNAL_DATABASE_URL"| xdb
@@ -190,11 +190,11 @@ Every step in order; the ones marked **human** are never taken by an agent.
 
 ---
 
-## The placeholder model set, and how to extend it
+## The model set, and how to extend it
 
-[`apps/api/app/models/__init__.py`](../../apps/api/app/models/__init__.py) is **empty on
-purpose** — `__all__ = []` and one commented example model. `alembic/versions/` holds no
-revisions. The service boots, Alembic is wired, and nothing has been migrated.
+[`apps/api/app/models/__init__.py`](../../apps/api/app/models/__init__.py) exports `Conversation` and `Message`
+(`conversation.py`). `alembic/versions/` holds revision `0001`. The service boots, Alembic is wired,
+and nothing has been migrated by this project.
 
 Growing it into a real data layer:
 
@@ -212,9 +212,8 @@ Growing it into a real data layer:
 4. **Generate a revision — against the dev database** (lifecycle step 4). Review the generated
    `upgrade()` **and** `downgrade()`; every revision ships both. The post-write hooks in
    `alembic.ini` run `ruff format` / `ruff check --fix` on the new file.
-5. **Review the SQL offline — no database needed** (step 5). Today this prints only the
-   transaction wrapper (`BEGIN TRANSACTION;` … `COMMIT;`), because there are no revisions;
-   `alembic heads` prints nothing.
+5. **Review the SQL offline — no database needed** (step 5). Today this prints the DDL of revision
+   `0001` (`conversations`, `messages`); `alembic heads` prints `0001 (head)`.
 6. **Apply it** — step 6.
 
 Steps 1–3 and 5 need no database. Step 4, step 6 and
@@ -289,8 +288,7 @@ Why engine-level, and how it is registered:
 The trade-off, stated plainly: spans are engine-level SQL, not ORM-level semantics (`select(Widget)`
 with model attributes). Revisit only if model-level span semantics become a real debugging need.
 
-Runtime proof is still pending — the model set is a placeholder and the dev database is not yet
-applied, so "a query lands in `AppDependencies`" is verified during the post-deploy smoke
+Runtime proof is still pending — revision `0001` is not yet applied to the dev database, so "a query lands in `AppDependencies`" is verified during the post-deploy smoke
 ([`OBSERVABILITY-ROADMAP.md`](../../OBSERVABILITY-ROADMAP.md),
 [post-deploy smoke runbook](../operations/runbooks/post-deploy-smoke.md)).
 
