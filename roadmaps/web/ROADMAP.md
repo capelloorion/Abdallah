@@ -120,18 +120,23 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 2.2 — ConversationList component
 
-- **status:** todo
+- **status:** done
 - **depends_on:** []
 - **layers:** [ui]
 - **acceptance:**
   - a presentational `ConversationList` renders rows (title and relative time), a selected state, the empty state "No chats yet", and a **+ New chat** button; it takes items, the selected id and callbacks as props and fetches nothing
   - it is keyboard-operable (rows are buttons, selected row marked `aria-current`) and has a component test next to it covering rows, selection, empty state and the new-chat callback
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: all pass; the new tests are `src/components/chat/ConversationList.test.tsx` and `src/lib/relative-time.test.ts`
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` succeeds
+  - nothing to click yet: no page uses the component until web 2.3 (the sidebar is wired there)
 - **needs_human:**
   - none
 - **notes:**
   - 2026-10-06 — planned. Tailwind utilities per ADR-0010; no component kit or client-state library (that needs an ADR).
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test. Files: `apps/web/src/components/chat/ConversationList.tsx` + test, `apps/web/src/lib/relative-time.ts` + test, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.4.0 → 0.5.0. Props use the generated `ConversationSummary` type, so web 2.3 can pass the list response straight in. Reviews: `code-reviewer` (no blockers). Fixed from it: a title made only of invisible characters now reads "Untitled chat", and a clipped title shows in full on hover (`title` attribute, still plain text). Note for web 2.3: `relativeTime` uses the clock at render time and does not refresh, so load the list client-side (not server-rendered) to avoid a hydration text mismatch.
+  - 2026-10-06 — confirmed by the developer (done).
 
 ### 2.3 — `/chat` page: list, create and reopen conversations
 

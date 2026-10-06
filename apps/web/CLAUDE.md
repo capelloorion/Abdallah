@@ -48,6 +48,7 @@ URL.
   trace id on failure — a failed answer with nothing to show is just that line, and a cut-off answer keeps its
   text and is marked incomplete. **Titles, paths and codes are document/server content: render them as text only —
   never `dangerouslySetInnerHTML`, never a link target** (threat model `shared-conversations` T5).
+- `src/components/chat/ConversationList.tsx` — the conversation sidebar (web 2.2): presentational, rows are buttons with `aria-current` on the selected one, "No chats yet", **+ New chat**; titles are stored data, rendered as text only. `src/lib/relative-time.ts` formats its times.
 - `src/lib/stream.ts` (`streamUpstream`/`proxyStream`), `src/lib/sse.ts` (frame parser/builder),
   `src/lib/chat-client.ts` (`askStream`, browser → BFF: hands over `citations`, reports every failure once as
   `{ code, traceId }` — from the api's JSON `{ error, trace_id }`, the BFF `502` event-stream `error` frame or an

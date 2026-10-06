@@ -7,6 +7,17 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-06
+
+### Added
+
+- `ConversationList` (`src/components/chat/ConversationList.tsx`): the conversation sidebar. Presentational only — it takes `items` (the shape of `GET /api/v1/conversations`), `selectedId`, `onSelect`, `onNewChat` and `disabled`, and fetches nothing. Rows are buttons showing the title and a relative time, the selected row carries `aria-current`, the empty state reads "No chats yet", and **+ New chat** is always offered. Titles are stored data and render as text only (own `<bdi>`, clipped by CSS); an empty title, or one made only of invisible characters, reads "Untitled chat"; a clipped title shows in full on hover and an unreadable time is left out.
+- `relativeTime` (`src/lib/relative-time.ts`): "5 minutes ago", "yesterday", "now" through `Intl.RelativeTimeFormat`; `''` for a bad date, "now" for a time in the future.
+
+### Tests
+
+- `ConversationList.test.tsx` and `relative-time.test.ts`: rows, selection, empty state, new chat, keyboard use, disabled, hostile title as inert text, title and time fallbacks. Each guard was proven by removing it and watching its test fail.
+
 ## [0.4.0] — 2026-10-06
 
 ### Added
