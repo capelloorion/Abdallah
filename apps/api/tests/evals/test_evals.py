@@ -1,7 +1,7 @@
 """Prompt regression harness (rule 70 → Testing).
 
 Offline by default: each case scripts the model's answer, so what is actually checked is the
-**pipeline around the prompt** — retrieval reaches the prompt, sources are surfaced, the system
+**pipeline around the prompt** — retrieval reaches the prompt, citations are surfaced, the system
 prompt still carries its placeholders and rules. Extend ``cases.json`` whenever a prompt file
 changes. A live-model tier is opt-in: set ``AI_EVAL_LIVE=true`` with real ``AZURE_AI_*``
 settings and the scripted answer is replaced by the deployment's own.
@@ -40,7 +40,7 @@ def test_eval_case(case: dict) -> None:
     assert retriever.calls and retriever.calls[0][0] == case["question"]
     for needle in case["expect_contains"]:
         assert needle.lower() in answer.text.lower(), (case["id"], answer.text)
-    assert answer.sources == case["expect_sources"]
+    assert answer.citations == case["expect_citations"]
 
 
 def test_system_prompt_keeps_its_guardrails() -> None:

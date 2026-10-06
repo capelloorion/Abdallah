@@ -69,11 +69,11 @@ report token usage on streamed answers too.
    (`answer → tools → answer`) runs until it stops calling tools.
 
 `ask(graph, question, history=…)` is the non-streaming entry point and returns the answer text,
-the unique sources, the context and the token usage.
+the citations (`[{title, path}]`, unique by path, in retrieval order), the context and the token usage.
 
 **`streaming.py`.** `stream_answer()` drives the same graph with LangGraph's `updates` +
-`messages` stream modes and yields Server-Sent Events: `sources` (after retrieval), `token`
-(per model chunk), `done` (sources + usage) or `error` (a bounded `error_kind`, never the
+`messages` stream modes and yields Server-Sent Events: `sources` (after retrieval, carrying
+`citations`), `token` (per model chunk), `done` (`citations` + usage) or `error` (a bounded `error_kind`, never the
 exception message). `sse_response()` wraps it in a `StreamingResponse` with proxy buffering
 disabled. The BFF forwards it with the streaming pass-through helper, not `fetchUpstream`.
 
@@ -92,10 +92,13 @@ the search index and an embedding deployment are configured, otherwise `NullRetr
 graph still answers, with an empty context.
 
 **`ingest.py`.** The RAG ingestion job owns the index definition (`build_index`: `id`,
-`content`, `source`, `chunk_index`, `content_vector` with an HNSW profile sized by
+`content`, `source`, `title` (the first `# ` heading outside code blocks, else the file name),
+`chunk_index`, `content_vector` with an HNSW profile sized by
 `AZURE_AI_EMBEDDING_DIMENSIONS`) so the retriever and the index cannot drift. `ensure_index` is
 idempotent; `ingest_documents` chunks (fixed windows with overlap), embeds in batches and
-uploads with stable ids (re-ingesting a source overwrites its chunks). Run it from `apps/api`:
+uploads with stable ids (re-ingesting a source overwrites its chunks). The retriever `select`s
+`title`, so the index must have that field: run the ingestion job (its first step, `ensure_index`,
+adds it in place) before the first query, otherwise retrieval fails with a bounded `error_kind`. Run it from `apps/api`:
 `uv run python -m app.ai.ingest ./docs`. The identity needs _Search Index Data Contributor_ +
 _Search Service Contributor_ (granted to the api identity by the `ai-search` module; a dev key
 works locally).
@@ -146,7 +149,7 @@ class AskIn(BaseModel):
 @router.post("/ask")
 async def ask_route(body: AskIn) -> dict:
     answer = await ask(graph(), body.question)
-    return {"answer": answer.text, "sources": answer.sources}
+    return {"answer": answer.text, "citations": answer.citations}
 
 
 @router.post("/ask/stream")

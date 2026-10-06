@@ -7,6 +7,31 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-06
+
+### Changed
+
+- **Citation contract** (roadmap api:2.1; internal to the AI runtime — the api ships no route that uses it
+  yet). `ask()` returns `Answer.citations: [{title, path}]` instead of `Answer.sources: [str]`, and the SSE
+  `sources` and `done` frames carry `citations` (same shape) instead of `sources`. Citations are unique by
+  path, in retrieval order; the first chunk's title wins. `unique_sources()` is replaced by `citations_for()`.
+- **Ingestion stores a `title`** on every chunk — the document's first `# ` heading (headings inside code
+  fences and YAML front matter are ignored, a closing `#` run is dropped but `C#` is kept; control and
+  bidi-override characters are removed; capped at 200 characters, on ingestion and again on read), else its file name — and `build_index` defines the
+  searchable `title` field. The retriever selects it; a chunk whose `title` is empty or null falls back to
+  the file name. **The Search query now selects `title`, so the index must have the field**: an index
+  created before this version makes retrieval fail (a bounded `error_kind: "error"`) until `ensure_index`
+  — the first step of `python -m app.ai.ingest` — has added it (Azure adds a field in place; existing
+  chunks then read back with a null title and fall back to the file name until re-ingested).
+- Titles and paths are document content and are never logged.
+
+### Added
+
+- Tests: citation shape and de-duplication, title extraction (including code fences and caps), index
+  contract, retriever fallback, SSE frames; the eval harness (`tests/evals/cases.json`) now asserts
+  `expect_citations` and has cases for the file-name fallback, several chunks of one document, and an
+  empty context.
+
 ## [0.5.0] — 2026-10-06
 
 ### Added

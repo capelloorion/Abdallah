@@ -117,7 +117,7 @@ human steps listed on each item.
 
 ### 2.1 — Citation contract: document titles on sources
 
-- **status:** todo
+- **status:** done
 - **depends_on:** []
 - **layers:** [ai]
 - **acceptance:**
@@ -126,11 +126,21 @@ human steps listed on each item.
   - the system prompt still cites inline `[n]`; the eval cases in `tests/evals/cases.json` cover the citation shape and the "I do not know" answer when the context is empty
   - retrieved text, titles and paths never appear in logs, spans, metrics or events
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **315 passed** (web: 136 passed); the changed/new tests are in `apps/api/tests/ai/test_ai_graph_streaming.py`, `apps/api/tests/ai/test_ai_tools_retrieval_ingest.py` and `apps/api/tests/evals/` (`cases.json` now has four cases and asserts `expect_citations`)
+  - `uv run --directory apps/api python -c "from app.ai.ingest import document_title; print(document_title('docs/x.md', '# Learning C#\n'))"` → `Learning C#`; with text `intro only` it prints `x.md`
+  - `just openapi` then `git status` — no change (the api ships no route that uses the citation shape yet)
+  - needs the dev Search service (see needs_human): `uv run --directory apps/api python -m app.ai.ingest ../../docs` → `documents=… chunks=… uploaded=… failed=0`; in the Azure portal the index has a searchable `title` field and a chunk shows its document heading
 - **needs_human:**
-  - confirm index `team-assistant-docs` does not exist yet on the shared Search service; if it exists with the old schema, it must be updated or recreated (cloud team) — do this before the first ingestion run (4.2)
+  - confirm index `team-assistant-docs` does not exist yet on the shared Search service, or that it may be updated: the retriever now selects `title`, so an index without that field makes retrieval fail until `ensure_index` (the first step of the ingest command) has added it in place — do this before the first real question (4.2)
+  - run the ingest command above against `dev` (needs the `AZURE_AI_*` / `AZURE_SEARCH_*` values in `apps/api/.env` — secrets, not set by an agent — and the api identity or a dev key with Search Index Data Contributor + Search Service Contributor)
+  - what only a live index proves: that Azure accepts the new `title` field on an existing index in place, the exact error when the field is missing, and the effect of a searchable `title` on ranking
 - **notes:**
   - 2026-10-06 — planned. The title field changes the index schema; the architecture review suggested a short amendment to ADR-0009 (not drafted).
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/api/app/ai/tools/retrieve.py` (`title` field, `fallback_title`, `clean_title`, `chunk_title`), `apps/api/app/ai/graph.py` (`Citation`, `citations_for`, `Answer.citations`; `unique_sources` and `Answer.sources` removed), `apps/api/app/ai/streaming.py` (`sources` and `done` frames carry `citations`), `apps/api/app/ai/ingest.py` (`document_title`, `title` on every chunk and in `build_index`, BOM-safe reads), tests and evals, `docs/architecture/ai.md`, `apps/api/CHANGELOG.md`, version 0.5.0 → 0.6.0 (`uv.lock` kept on lock revision 3). The wire key is `citations` (event name stays `sources`).
+  - 2026-10-06 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: `# Learning C#` was cut to "Learning C" (closing `#` run now only dropped when preceded by whitespace; linear-time, no regex), fence tracking (type and length), BOM, YAML front matter, indented headings, bidi/control characters removed, title cap applied again on read, the old-index failure mode stated correctly, and many more edge-case tests.
+  - 2026-10-06 — NOT done here, for other items: (a) web item 2.1 must read `citations` instead of `sources` (the template's example route, mock and tests still use string `sources`; they pass only because they mock the wire) and must render titles as plain text and link a `path` only through an allow-list (relative, no scheme, no `..`, `docs/…`) — threat model T5; (b) item 4.2: `path` is whatever path was given to the ingest CLI, so running it with an absolute or `../../docs` path stores that string and shows it to users — store paths relative to the repo root (or reject absolute paths and `..`); and one non-UTF-8 file under `docs/` aborts the whole ingest (catch per file, log a count); (c) `search_fields` is not pinned, so the searchable `title` now also affects keyword ranking — acceptable while only repo writers can change headings; (d) the roadmap suggested a short amendment to ADR-0009 for the new index field — not drafted.
+  - 2026-10-06 — confirmed by the developer (done). The live-index checks (needs_human above) are still open.
 
 ### 2.2 — Ask a question (JSON)
 

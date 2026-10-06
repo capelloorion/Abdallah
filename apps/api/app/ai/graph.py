@@ -31,7 +31,13 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from app.ai.config import get_ai_settings
 from app.ai.prompts import render_prompt
 from app.ai.telemetry import extract_usage, model_call_span, record_retrieval
-from app.ai.tools.retrieve import DEFAULT_TOP_K, RetrievedChunk, Retriever, get_default_retriever
+from app.ai.tools.retrieve import (
+    DEFAULT_TOP_K,
+    RetrievedChunk,
+    Retriever,
+    chunk_title,
+    get_default_retriever,
+)
 
 
 class GraphState(TypedDict, total=False):
@@ -125,22 +131,35 @@ def build_graph(
     return graph.compile()
 
 
+class Citation(TypedDict):
+    """What a user sees for a source: the document's title and its path."""
+
+    title: str
+    path: str
+
+
 @dataclass
 class Answer:
     text: str
-    sources: list[str] = field(default_factory=list)
+    citations: list[Citation] = field(default_factory=list)
     context: list[RetrievedChunk] = field(default_factory=list)
     input_tokens: int | None = None
     output_tokens: int | None = None
 
 
-def unique_sources(chunks: list[RetrievedChunk]) -> list[str]:
-    seen: list[str] = []
-    for c in chunks:
-        source = c.get("source") or ""
-        if source and source not in seen:
-            seen.append(source)
-    return seen
+def citations_for(chunks: list[RetrievedChunk]) -> list[Citation]:
+    """One citation per distinct source path, in retrieval order (the first chunk's title wins).
+
+    Titles and paths are document content: never log them (rule 70).
+    """
+    seen: set[str] = set()
+    citations: list[Citation] = []
+    for chunk in chunks:
+        path = chunk.get("source") or ""
+        if path and path not in seen:
+            seen.add(path)
+            citations.append({"title": chunk_title(chunk), "path": path})
+    return citations
 
 
 async def ask(
@@ -162,7 +181,7 @@ async def ask(
     context = result.get("context", []) or []
     return Answer(
         text=text,
-        sources=unique_sources(context),
+        citations=citations_for(context),
         context=context,
         input_tokens=input_tokens,
         output_tokens=output_tokens,

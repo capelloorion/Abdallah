@@ -3,18 +3,99 @@
     "id": "grounded-answer-cites-context",
     "question": "Which port does the api listen on?",
     "context": [
-      { "id": "c1", "content": "The api service listens on port 8000.", "source": "docs/api.md", "score": 1.0 }
+      {
+        "id": "c1",
+        "content": "The api service listens on port 8000.",
+        "source": "docs/api.md",
+        "score": 1,
+        "title": "The api service"
+      }
     ],
     "scripted_answer": "The api listens on port 8000 [1].",
-    "expect_contains": ["8000", "[1]"],
-    "expect_sources": ["docs/api.md"]
+    "expect_contains": [
+      "8000",
+      "[1]"
+    ],
+    "expect_citations": [
+      {
+        "title": "The api service",
+        "path": "docs/api.md"
+      }
+    ]
+  },
+  {
+    "id": "citation-title-falls-back-to-the-file-name",
+    "question": "Which port does the web app use?",
+    "context": [
+      {
+        "id": "c1",
+        "content": "The web app listens on port 3000.",
+        "source": "docs/guide/web.md",
+        "score": 1
+      }
+    ],
+    "scripted_answer": "The web app uses port 3000 [1].",
+    "expect_contains": [
+      "3000",
+      "[1]"
+    ],
+    "expect_citations": [
+      {
+        "title": "web.md",
+        "path": "docs/guide/web.md"
+      }
+    ]
+  },
+  {
+    "id": "several-chunks-of-one-document-give-one-citation",
+    "question": "How is tracing done?",
+    "context": [
+      {
+        "id": "c1",
+        "content": "A trace id is 32 hex characters.",
+        "source": "docs/tracing.md",
+        "score": 1,
+        "title": "Tracing"
+      },
+      {
+        "id": "c2",
+        "content": "The origin prefix is 4 hex characters.",
+        "source": "docs/tracing.md",
+        "score": 0.9,
+        "title": "Tracing"
+      },
+      {
+        "id": "c3",
+        "content": "Logs carry the trace id.",
+        "source": "docs/logging.md",
+        "score": 0.8,
+        "title": "Logging"
+      }
+    ],
+    "scripted_answer": "It is 32 hex characters [1][2], and logs carry it [3].",
+    "expect_contains": [
+      "32 hex",
+      "[3]"
+    ],
+    "expect_citations": [
+      {
+        "title": "Tracing",
+        "path": "docs/tracing.md"
+      },
+      {
+        "title": "Logging",
+        "path": "docs/logging.md"
+      }
+    ]
   },
   {
     "id": "no-context-admits-unknown",
     "question": "What is the CEO's phone number?",
     "context": [],
     "scripted_answer": "I do not know — the context does not contain that information.",
-    "expect_contains": ["do not know"],
-    "expect_sources": []
+    "expect_contains": [
+      "do not know"
+    ],
+    "expect_citations": []
   }
 ]

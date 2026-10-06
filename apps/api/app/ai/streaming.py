@@ -2,10 +2,13 @@
 
 Wire format (one ``event:`` + one JSON ``data:`` line per event, blank-line terminated):
 
-    event: sources   data: {"sources": ["docs/a.md"], "count": 3}   — after retrieval
+    event: sources   data: {"citations": [{"title": "A", "path": "docs/a.md"}], "count": 3}
+                                                                    — after retrieval
     event: token     data: {"text": "partial "}                     — per model token chunk
-    event: done      data: {"sources": [...], "input_tokens": 12, "output_tokens": 40}
+    event: done      data: {"citations": [...], "input_tokens": 12, "output_tokens": 40}
     event: error     data: {"error_kind": "timeout"}                — then the stream ends
+
+``citations`` are unique by path, in retrieval order; ``count`` is the number of retrieved chunks.
 
 Use from a ``/v1`` route::
 
@@ -27,7 +30,7 @@ from typing import Any
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessageChunk, AnyMessage, HumanMessage
 
-from app.ai.graph import GraphState, _message_text, unique_sources
+from app.ai.graph import Citation, GraphState, _message_text, citations_for
 from app.ai.telemetry import error_kind, extract_usage
 
 SSE_MEDIA_TYPE = "text/event-stream"
@@ -50,7 +53,7 @@ async def stream_answer(
         "messages": [*(history or []), HumanMessage(content=question)],
         "context": [],
     }
-    sources: list[str] = []
+    citations: list[Citation] = []
     input_tokens: int | None = None
     output_tokens: int | None = None
     try:
@@ -61,8 +64,8 @@ async def stream_answer(
                 for node, update in (payload or {}).items():
                     if node == "retrieve":
                         context = (update or {}).get("context", []) or []
-                        sources = unique_sources(context)
-                        yield sse("sources", {"sources": sources, "count": len(context)})
+                        citations = citations_for(context)
+                        yield sse("sources", {"citations": citations, "count": len(context)})
                     elif node == "answer":
                         for message in (update or {}).get("messages", []) or []:
                             i, o = extract_usage(message)
@@ -83,7 +86,7 @@ async def stream_answer(
         return
     yield sse(
         "done",
-        {"sources": sources, "input_tokens": input_tokens, "output_tokens": output_tokens},
+        {"citations": citations, "input_tokens": input_tokens, "output_tokens": output_tokens},
     )
 
 

@@ -9,16 +9,36 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 import app.ai.tools.retrieve as retrieve_mod
-from app.ai.graph import ask, build_graph, format_context, last_user_text
+from app.ai.graph import ask, build_graph, citations_for, format_context, last_user_text
 from app.ai.streaming import sse, sse_response, stream_answer
 from app.ai.tools.retrieve import NullRetriever
 from tests.ai.fakes import FakeRetriever, fake_chat_model
 
 CHUNKS = [
-    {"id": "1", "content": "The api listens on port 8000.", "source": "docs/api.md", "score": 0.9},
-    {"id": "2", "content": "The web app listens on 3000.", "source": "docs/web.md", "score": 0.8},
-    {"id": "3", "content": "Duplicate source chunk.", "source": "docs/api.md", "score": 0.7},
+    {
+        "id": "1",
+        "content": "The api listens on port 8000.",
+        "source": "docs/api.md",
+        "score": 0.9,
+        "title": "The api service",
+    },
+    {
+        "id": "2",
+        "content": "The web app listens on 3000.",
+        "source": "docs/web.md",
+        "score": 0.8,
+    },  # no title stored: the file name is used
+    {
+        "id": "3",
+        "content": "Duplicate source chunk.",
+        "source": "docs/api.md",
+        "score": 0.7,
+        "title": "A later chunk of the api doc",
+    },
 ]
+
+API_CITATION = {"title": "The api service", "path": "docs/api.md"}
+WEB_CITATION = {"title": "web.md", "path": "docs/web.md"}
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +60,7 @@ def test_last_user_text_picks_the_latest_human_turn() -> None:
     assert last_user_text([HumanMessage(content="a"), HumanMessage(content="b")]) == "b"
 
 
-def test_ask_runs_retrieval_then_model_and_collects_sources() -> None:
+def test_ask_runs_retrieval_then_model_and_collects_citations() -> None:
     retriever = FakeRetriever(CHUNKS)
     graph = build_graph(
         chat_model=fake_chat_model("Port 8000 [1]."),
@@ -51,7 +71,7 @@ def test_ask_runs_retrieval_then_model_and_collects_sources() -> None:
     answer = asyncio.run(ask(graph, "which port?"))
     assert answer.text == "Port 8000 [1]."
     assert retriever.calls == [("which port?", 2)]
-    assert answer.sources == ["docs/api.md", "docs/web.md"]
+    assert answer.citations == [API_CITATION, WEB_CITATION]  # unique by path, retrieval order
     assert answer.input_tokens == 10 and answer.output_tokens == 5
 
 
@@ -64,7 +84,7 @@ def test_graph_without_retriever_falls_back_to_null_retriever(
     graph = build_graph(chat_model=fake_chat_model("I do not know."), deployment_label="test")
     answer = asyncio.run(ask(graph, "anything"))
     assert answer.text == "I do not know."
-    assert answer.sources == [] and answer.context == []
+    assert answer.citations == [] and answer.context == []
 
 
 def test_history_is_passed_through() -> None:
@@ -113,14 +133,14 @@ def test_stream_answer_yields_sources_tokens_done() -> None:
     events = _collect(asyncio.run(run()))
     kinds = [e for e, _ in events]
     assert kinds[0] == "sources"
-    assert events[0][1] == {"sources": ["docs/api.md"], "count": 1}
+    assert events[0][1] == {"citations": [API_CITATION], "count": 1}
     assert kinds[-1] == "done"
     tokens = "".join(d["text"] for e, d in events if e == "token")
     assert tokens == "alpha beta"
-    assert events[-1][1]["sources"] == ["docs/api.md"]
+    assert events[-1][1]["citations"] == [API_CITATION]
     # Usage is provider-reported; a streaming fake aggregates chunks without it, so the
     # contract is "the keys are present, values may be None".
-    assert set(events[-1][1]) == {"sources", "input_tokens", "output_tokens"}
+    assert set(events[-1][1]) == {"citations", "input_tokens", "output_tokens"}
 
 
 def test_stream_answer_emits_bounded_error_frame() -> None:
@@ -145,3 +165,57 @@ def test_sse_response_headers() -> None:
     response = sse_response(frames())
     assert response.media_type == "text/event-stream"
     assert response.headers["cache-control"] == "no-cache"
+
+
+# ── citations ────────────────────────────────────────────────────────────────
+
+
+def test_citations_are_unique_by_path_in_retrieval_order_first_title_wins() -> None:
+    assert citations_for(CHUNKS) == [API_CITATION, WEB_CITATION]
+    assert citations_for([]) == []
+
+
+def test_citations_skip_chunks_without_a_source() -> None:
+    chunks = [
+        {"id": "x", "content": "c", "source": "", "score": None, "title": "No path"},
+        {"id": "y", "content": "c", "source": "docs/a.md", "score": None},
+    ]
+    assert citations_for(chunks) == [{"title": "a.md", "path": "docs/a.md"}]
+
+
+def test_a_blank_title_falls_back_to_the_file_name() -> None:
+    chunks = [{"id": "x", "content": "c", "source": "docs/guide/setup.md", "score": 1, "title": ""}]
+    assert citations_for(chunks) == [{"title": "setup.md", "path": "docs/guide/setup.md"}]
+
+
+def test_a_windows_style_source_path_still_yields_a_file_name() -> None:
+    chunks = [{"id": "x", "content": "c", "source": "docs\\a.md", "score": 1}]
+    assert citations_for(chunks)[0]["title"] == "a.md"
+
+
+def test_stream_sources_and_done_frames_carry_the_same_citations_for_several_documents() -> None:
+    graph = build_graph(
+        chat_model=fake_chat_model("ok"), retriever=FakeRetriever(CHUNKS), deployment_label="test"
+    )
+
+    async def run() -> list[str]:
+        return [f async for f in stream_answer(graph, "q")]
+
+    events = _collect(asyncio.run(run()))
+    assert events[0] == ("sources", {"citations": [API_CITATION, WEB_CITATION], "count": 3})
+    assert events[-1][1]["citations"] == [API_CITATION, WEB_CITATION]
+
+
+def test_no_retrieval_means_empty_citations_in_both_frames() -> None:
+    graph = build_graph(
+        chat_model=fake_chat_model("I do not know."),
+        retriever=FakeRetriever([]),
+        deployment_label="test",
+    )
+
+    async def run() -> list[str]:
+        return [f async for f in stream_answer(graph, "q")]
+
+    events = _collect(asyncio.run(run()))
+    assert events[0] == ("sources", {"citations": [], "count": 0})
+    assert events[-1][1]["citations"] == []
