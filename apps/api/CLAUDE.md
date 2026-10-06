@@ -62,6 +62,8 @@ this as a starting map; read the actual files when you need detail.
   singleton**, `dispose_engine()`), `session.py` (`get_session()` FastAPI dependency — the ONLY
   way routes get a handle on the project DB), `external.py` (second lazy **read-only** engine
   for `EXTERNAL_DATABASE_URL`: `get_external_session()`, non-SELECT statements refused).
+- `routers/conversations.py` + `repositories/conversations.py` — `/v1/conversations` (create, list, read; roadmap api:1.2). The router owns the request/response models and
+  the error mapping; the repository owns the `select(...)` queries and takes an `AsyncSession` (tests pass a fake).
 - `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; today `conversation.py`
   (`Conversation`, `Message` — the shared chat history, ADR-0014). Import new model modules in `models/__init__.py` so Alembic sees them.
 - `../alembic/` + `../alembic.ini` — Alembic (async `env.py`, URL from `DATABASE_URL` via

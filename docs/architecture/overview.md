@@ -28,8 +28,8 @@ project's job.
 
 **Concretely, what runs today:** two services, one `x-trace-id` flowing unchanged through the
 `web → api` hop, OpenTelemetry → Azure Monitor in both services with a fail-safe degraded
-mode, and the operational endpoints `/ping`, `/info`, `/health`. There is no auth, no business
-domain, no migrated database, and no deployed app hosting.
+mode, and the operational endpoints `/ping`, `/info`, `/health`. There is no auth, almost no business
+domain (only `/v1/conversations`), no migrated database, and no deployed app hosting.
 
 **Concretely, what a project adds:** domain modules under `/v1` in whichever service owns them
 (mandatory versioning — [ADR-0001](../adr/0001-api-versioning.md)), SQLAlchemy models plus real

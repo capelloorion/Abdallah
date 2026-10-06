@@ -18,7 +18,7 @@ tooling is.
 - a map of where to go next.
 
 Everything below documents the template's **foundation** — the wired-together services,
-tracing, and observability. There are no business features and no auth yet; see
+tracing, and observability. There are almost no business features (only the `/v1/conversations` chat history) and no auth yet; see
 [_Scope & delivery status_](../README.md#scope--delivery-status) in the root README.
 
 ---

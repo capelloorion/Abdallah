@@ -6,7 +6,7 @@ quick orientation (what the template is, how to run it); everything deeper lives
 by what you're trying to do.
 
 > The template ships a cross-service **foundation** (BFF + trace propagation + observability) —
-> no business features, no auth. Docs describe that foundation; each AI project built on it
+> next to no business features (only `/v1/conversations`), no auth. Docs describe that foundation; each AI project built on it
 > extends both the platform and these docs.
 
 ## Start here

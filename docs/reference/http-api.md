@@ -1,8 +1,9 @@
 # HTTP API reference
 
-The complete HTTP surface of both services as they exist today: **no business endpoints have
-shipped yet** — this documents the operational foundation (`/ping`, `/info`, `/health`) plus the
-two demo BFF routes in `apps/web` that exercise the `web → api` hop. Derived from the route
+The complete HTTP surface of both services as they exist today: the operational foundation
+(`/ping`, `/info`, `/health`), the first business endpoints (`/v1/conversations`, api only — the
+BFF mirror is a later roadmap item) and the two demo BFF routes in `apps/web` that exercise the
+`web → api` hop. Derived from the route
 source, cross-checked against the test suites (`routes.test.ts`, `test_routes.py`).
 
 `apps/api` (FastAPI) is the **only backend**; it took the `api` name in
@@ -13,15 +14,15 @@ removed in [ADR-0003](../adr/0003-remove-nestjs-api-layer.md).
 
 ## Route map
 
-| Method | Path                | Service          | Purpose                                                         | Versioned?       |
-| ------ | ------------------- | ---------------- | --------------------------------------------------------------- | ---------------- |
-| GET    | `/ping`             | `apps/api`       | Liveness greeting                                               | No (operational) |
-| GET    | `/info`             | `apps/api`       | Status/version/runtime report                                   | No (operational) |
-| GET    | `/health`           | `apps/api`       | Health + observability state                                    | No (operational) |
-| GET    | `/v1/*`             | `apps/api`       | Mandatory business router — **empty**, no routes registered yet | Yes (`/v1`)      |
-| GET    | `/api/ping-backend` | `apps/web` (BFF) | Proxies `apps/api` `/ping`                                      | No (demo route)  |
-| GET    | `/api/info-backend` | `apps/web` (BFF) | Proxies `apps/api` `/info`                                      | No (demo route)  |
-| GET    | `/health`           | `apps/web` (BFF) | Own health + observability state (no upstream call)             | No (operational) |
+| Method   | Path                       | Service          | Purpose                                             | Versioned?       |
+| -------- | -------------------------- | ---------------- | --------------------------------------------------- | ---------------- |
+| GET      | `/ping`                    | `apps/api`       | Liveness greeting                                   | No (operational) |
+| GET      | `/info`                    | `apps/api`       | Status/version/runtime report                       | No (operational) |
+| GET      | `/health`                  | `apps/api`       | Health + observability state                        | No (operational) |
+| POST/GET | `/v1/conversations[/{id}]` | `apps/api`       | Chat history: create, list, read (see below)        | Yes (`/v1`)      |
+| GET      | `/api/ping-backend`        | `apps/web` (BFF) | Proxies `apps/api` `/ping`                          | No (demo route)  |
+| GET      | `/api/info-backend`        | `apps/web` (BFF) | Proxies `apps/api` `/info`                          | No (demo route)  |
+| GET      | `/health`                  | `apps/web` (BFF) | Own health + observability state (no upstream call) | No (operational) |
 
 Business endpoints, when they arrive, are `/v1/<feature>` on the api (routers attached to
 `v1_router`) and `/api/v1/<feature>` on web (folder-enforced). See [Versioning](#versioning).
@@ -31,8 +32,8 @@ Business endpoints, when they arrive, are `/v1/<feature>` on the api (routers at
 ## `apps/api` — FastAPI (port 8000, origin `0c70`)
 
 Source: `apps/api/app/routes.py` (operational router, mounted at root by `app/main.py`).
-`app/routers/v1.py` defines `v1_router` (`prefix="/v1"`) but **no feature router is attached
-yet** — `/v1/*` currently 404s.
+`app/routers/v1.py` defines `v1_router` (`prefix="/v1"`) and attaches the feature routers
+(`conversations` today) — see [`/v1/conversations`](#v1conversations--chat-history-shared-no-auth).
 
 ### `GET /ping`
 
@@ -104,6 +105,23 @@ Field notes (`apps/api/app/routes.py`):
 state, not database health. **The database is never queried here**: the SQLAlchemy engine is
 lazy and the baseline issues no queries, so `/health` is green with the placeholder
 `DATABASE_URL`.
+
+### `/v1/conversations` — chat history (shared, no auth)
+
+Conversations are **shared**: there is no owner, so every caller sees every conversation
+([ADR-0014](../adr/0014-shared-conversations-until-auth.md), Proposed). Titles and message text
+are user content and are never logged. Source: `apps/api/app/routers/conversations.py`.
+
+| Method | Path                     | Request                                      | Success                                                                                                            | Errors                                                            |
+| ------ | ------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| POST   | `/v1/conversations`      | optional `{ "title": string }` (≤ 200 chars) | `201` `{ id, title, created_at, updated_at }`; a missing or blank title becomes `New conversation`                 | `422 validation_error` (title too long or not a string)           |
+| GET    | `/v1/conversations`      | `?limit=50` (1–100)                          | `200` `{ items: [{ id, title, updated_at }], count }`, newest `updated_at` first                                   | `422 validation_error` (limit out of range)                       |
+| GET    | `/v1/conversations/{id}` | —                                            | `200` `{ id, title, created_at, updated_at, messages: [{ id, role, content, citations, created_at }], truncated }` | `404 not_found` (unknown id), `422 validation_error` (not a UUID) |
+
+- Timestamps are ISO 8601 in UTC. `messages` are oldest first; `citations` is `[{ title, path }]` or `null`.
+- A read returns at most the **500 most recent** messages; `truncated` is `true` when older ones were
+  left out (there is no way yet to fetch them — paging is a later item). (This field is an addition to the draft contract in `docs/architecture.md` B4a.)
+- Every response echoes `x-trace-id`; errors use the `{ error, trace_id }` contract below.
 
 ---
 
@@ -233,6 +251,6 @@ disabled/degraded state never crashes the service — see `.claude/rules/60-obse
   [`../../.claude/rules/05-api-versioning.md`](../../.claude/rules/05-api-versioning.md).
 - **The only exemption**: the operational endpoints `/ping`, `/info`, `/health` (both services)
   stay unversioned — container/Azure health probes target fixed paths.
-- **This reference documents the foundation surface only** — there are no business endpoints
-  yet. `apps/api`'s `v1_router` is mounted but empty; `apps/web` has no `src/app/api/v1/`
-  folder yet — the first business BFF route creates it.
+- **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2). `apps/web` has no
+  BFF route for it yet (web roadmap 1.1); the template's example `/api/v1/assistant/*` routes
+  are the only business-shaped BFF routes.

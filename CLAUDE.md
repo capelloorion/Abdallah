@@ -16,7 +16,7 @@ BFF, which calls `api` server-side; the chain `web → api` carries one `x-trace
 unchanged. **SQLAlchemy 2 async + Alembic** on **Azure SQL Database** via `mssql+aioodbc`
 (ADR-0008; two models — conversations, messages — lazy engine, migrations never run by an agent, **never a local database**) plus an
 optional **read-only** second engine for an external database. Currently a working baseline
-(ping/health) with no business features and no auth. The living architecture is
+(ping/health) plus the `/v1/conversations` chat-history endpoints; no AI answers yet and no auth. The living architecture is
 [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md).
 
 > **⚖️ Graded autonomy (governs this entire `.claude/` setup):** approval is given at the level

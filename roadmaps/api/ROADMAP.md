@@ -57,7 +57,7 @@ human steps listed on each item.
 
 ### 1.2 — Conversation endpoints (create, list, get)
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [1.1]
 - **layers:** [endpoint]
 - **acceptance:**
@@ -67,12 +67,25 @@ human steps listed on each item.
   - every response echoes `x-trace-id`; errors use `{error, trace_id}`; no message content appears in logs, spans, metrics or events
   - `docs/reference/openapi.json` and the web's `src/lib/api-types.ts` are regenerated (`just openapi`) so the web items can type their mocks against them
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **263 passed** (web: 136 passed); the new file is `apps/api/tests/test_conversations_api.py` (47 tests, no database)
+  - `just openapi` then `git status` — `docs/reference/openapi.json` and `apps/web/src/lib/api-types.ts` show no further change (they already contain the three routes)
+  - needs the dev database (after 1.1 is applied and `DATABASE_URL` is set in `apps/api/.env`): `uv run --directory apps/api uvicorn app.main:app --port 8000`, then
+    - `curl -s -X POST localhost:8000/v1/conversations -H 'content-type: application/json' -d '{"title":"Trace ids"}'` → `201` `{id, title, created_at, updated_at}`
+    - `curl -s localhost:8000/v1/conversations` → `200`, the new conversation first, `count` ≥ 1
+    - `curl -s localhost:8000/v1/conversations/<id>` → `200`, `"messages": []`, `"truncated": false`
+    - `curl -si localhost:8000/v1/conversations/00000000-0000-0000-0000-000000000000` → `404` `{"error":"not_found","trace_id":"…"}` and the same value in the `x-trace-id` header
+    - `curl -s -o /dev/null -w "%{http_code}" "localhost:8000/v1/conversations?limit=101"` → `422`
 - **needs_human:**
-  - run the endpoints against the real dev database only after 1.1 is applied
+  - apply migration 1.1 on `dev` (`migrate.yml`) and put the dev `DATABASE_URL` in `apps/api/.env` (a secret — not set by an agent) to run the curl steps above
+  - prove against a real SQL Server what offline tests cannot: millisecond timestamps round-trip, the 200-UTF-16-unit title limit, `TOP`/`ORDER BY` and the `role` collation order, and that a naive datetime inserts through pyodbc
 - **notes:**
   - 2026-10-06 — planned. Tested with a fake session; no database needed.
   - 2026-10-06 — from the 1.1 security review: `GET /v1/conversations/{id}` loads a whole history, so cap the number of messages returned (or paginate); titles are user content and appear in the list for everyone (ADR-0014).
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/api/app/routers/conversations.py`, `apps/api/app/repositories/` (new), `apps/api/app/routers/v1.py`, `apps/api/tests/test_conversations_api.py`, regenerated `docs/reference/openapi.json` and `apps/web/src/lib/api-types.ts`, `docs/reference/http-api.md`, `apps/api/CLAUDE.md`, `apps/api/CHANGELOG.md`, version 0.4.0 → 0.5.0 (`uv.lock` kept on lock revision 3 for the pinned uv 0.10.9), plus a few "no business features" orientation lines. Nothing applied, no database contacted.
+  - 2026-10-06 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed: UTF-16 title limit, millisecond timestamps, citations hardening (size cap, RecursionError), deterministic message order, plain top-of-file import, stale HTTP docs, weaker tests. API addition beyond the draft contract: `truncated` on `GET /v1/conversations/{id}` (older messages cannot be fetched yet; paging is a later item).
+  - 2026-10-06 — NOT done here, for later items (re-run `/plan-roadmap api` to turn them into items): (a) `POST /v1/conversations` is an unauthenticated write with no rate limit or growth cap, and the list has no paging, so a flood could push real conversations off the list (rate limit at BFF/ingress, a cursor on `updated_at`/`id`, retention); (b) a request-body size limit at the BFF/ingress; (c) the message-writing item (2.2) must cap `content` and stored answer length and validate `citations` strictly, including a format check on `path`; (d) the web layer must render titles, message text and citation paths as plain text (no `dangerouslySetInnerHTML`, no `javascript:` links). Team-owned docs to update: add `truncated` to B4a in `docs/architecture.md`.
+  - 2026-10-06 — confirmed by the developer (done). Real-database checks (needs_human above) are still open.
 
 ### 1.3 — Threat model: shared conversation content
 

@@ -7,6 +7,27 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-06
+
+### Added
+
+- **`/v1/conversations`** (roadmap api:1.2): `POST /v1/conversations` (optional title ≤ 200 characters,
+  trimmed; missing or blank → "New conversation"; `201`), `GET /v1/conversations?limit=50` (1–100,
+  newest `updated_at` first, `{items, count}`), `GET /v1/conversations/{id}` (the conversation and its
+  messages oldest first, with parsed `citations`). Unknown id → `404 not_found`; a malformed id, a bad
+  limit or a bad title → `422 validation_error`. Timestamps are timezone-aware UTC. Every response echoes
+  `x-trace-id`; titles and message text are never logged.
+- A read returns at most the 500 most recent messages and sets `truncated: true` when it cut older
+  ones (an addition to the draft contract; bounds the size of a read, from the api:1.1 security review).
+- `app/repositories/` (query functions taking an `AsyncSession`) and `app/routers/conversations.py`;
+  `docs/reference/openapi.json` and the web's `src/lib/api-types.ts` regenerated.
+- Hardening from review: a title is limited to 200 **UTF-16 code units** (the `NVARCHAR(200)` limit; 100 emoji
+  fit, 101 are a `422` rather than a database error); timestamps are stored at millisecond precision so
+  `POST` and a later `GET` agree; unreadable, oversized (> 64 KB) or deeply nested stored `citations` are
+  dropped to `null` instead of failing the read; the message read has a deterministic final `id` order.
+- Tests: `tests/test_conversations_api.py` (contract, ordering and `TOP` limits via compiled SQL,
+  bounds, error paths, trace echo, no content in logs) — no database.
+
 ## [0.4.0] — 2026-10-06
 
 ### Added
