@@ -1,4 +1,5 @@
 import type { components } from '@/lib/api-types';
+import { DEFAULT_CONVERSATION_TITLE } from '@/lib/conversation-limits';
 import { sseFrame } from '@/lib/sse';
 
 /**
@@ -12,7 +13,7 @@ import { sseFrame } from '@/lib/sse';
  */
 type Schemas = components['schemas'];
 
-export const DEFAULT_CONVERSATION_TITLE = 'New conversation';
+export { DEFAULT_CONVERSATION_TITLE };
 
 export const TRACE_CONVERSATION_ID = '3f2b9c1e-5a47-4d8e-9b6a-1c0d2e3f4a51';
 export const ERRORS_CONVERSATION_ID = '7a1d4e92-0b3c-4f65-8e21-9d8c7b6a5f42';

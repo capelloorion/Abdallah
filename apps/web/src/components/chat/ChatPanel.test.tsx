@@ -283,4 +283,33 @@ describe('<ChatPanel /> limits and cancellation', () => {
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Message')).toHaveFocus();
   });
+
+  it('reports the question once its answer is complete, and not when the answer fails', async () => {
+    const onAnswered = vi.fn();
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        stream([sseFrame('token', { text: 'ok' }), sseFrame('done', { citations: [] })]),
+      )
+      .mockResolvedValueOnce(
+        stream([sseFrame('token', { text: 'half' }), sseFrame('error', { error_kind: 'timeout' })]),
+      );
+    const user = userEvent.setup();
+    render(<ChatPanel endpoint={ENDPOINT} onAnswered={onAnswered} />);
+    await user.type(screen.getByLabelText('Message'), 'first{Enter}');
+    await waitFor(() => expect(onAnswered).toHaveBeenCalledExactlyOnceWith('first'));
+    await waitFor(() => expect(screen.getByLabelText('Message')).toBeEnabled());
+    await user.type(screen.getByLabelText('Message'), 'second{Enter}');
+    await screen.findByRole('alert');
+    expect(onAnswered).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the question counter with the api limit by default and takes another', () => {
+    const { unmount } = render(<ChatPanel endpoint={ENDPOINT} />);
+    expect(screen.getByTestId('question-counter')).toHaveTextContent('0 / 4,000');
+    unmount();
+    render(<ChatPanel endpoint={ENDPOINT} maxQuestionChars={50} />);
+    expect(screen.getByTestId('question-counter')).toHaveTextContent('0 / 50');
+  });
 });

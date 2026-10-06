@@ -381,4 +381,124 @@ describe('<ChatWorkspace />', () => {
     unmount();
     expect(signal?.aborted).toBe(true);
   });
+
+  describe('after a question is answered', () => {
+    const answerFrames = [
+      sseFrame('token', { text: 'An answer' }),
+      sseFrame('done', { citations: [] }),
+    ];
+    const askRoute = (frames: string[]) => () =>
+      new Response(sseStreamFromFrames(frames), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    const rows = () =>
+      within(screen.getByRole('navigation', { name: 'Conversations' }))
+        .getAllByRole('listitem')
+        .map((li) => within(li).getByRole('button'));
+    const askPath = (id: string) => `POST /api/v1/conversations/${id}/ask/stream`;
+
+    it('moves the conversation to the top of the list', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [open(ID_B)]: () => json(detail(ID_B, 'Error contract', [])),
+        [askPath(ID_B)]: askRoute(answerFrames),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await user.click(await screen.findByRole('button', { name: /Error contract/ }));
+      await screen.findByRole('heading', { level: 2, name: 'Error contract' });
+      expect(rows()[0]).toHaveTextContent('Trace ids');
+      await user.type(screen.getByLabelText('Message'), 'anything{Enter}');
+      await screen.findByText('An answer');
+      await waitFor(() => expect(rows()[0]).toHaveTextContent('Error contract'));
+      expect(rows()[0]).toHaveTextContent('now');
+      expect(rows()[0]).toHaveAttribute('aria-current', 'true');
+      expect(rows()[1]).toHaveTextContent('Trace ids'); // its title is untouched
+      expect(screen.getByRole('heading', { level: 2, name: 'Error contract' })).toBeInTheDocument();
+    });
+
+    it('gives a "New conversation" its first question as title, in the list and the heading', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [CREATE]: () =>
+          json({ id: ID_NEW, title: 'New conversation', updated_at: '2026-10-06T12:00:00Z' }, 201),
+        [askPath(ID_NEW)]: askRoute(answerFrames),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByRole('list');
+      await user.click(screen.getByRole('button', { name: '+ New chat' }));
+      await screen.findByRole('heading', { level: 2, name: 'New conversation' });
+      await user.type(screen.getByLabelText('Message'), 'How do I deploy?{Enter}');
+      await screen.findByText('An answer');
+      await waitFor(() => expect(rows()[0]).toHaveTextContent('How do I deploy?'));
+      expect(
+        screen.getByRole('heading', { level: 2, name: 'How do I deploy?' }),
+      ).toBeInTheDocument();
+
+      // a second question does not rename it
+      await waitFor(() => expect(screen.getByLabelText('Message')).toBeEnabled());
+      await user.type(screen.getByLabelText('Message'), 'and then?{Enter}');
+      await waitFor(() => expect(screen.getAllByText('An answer')).toHaveLength(2));
+      expect(rows()[0]).toHaveTextContent('How do I deploy?');
+      expect(rows()[0]).not.toHaveTextContent('and then?');
+    });
+
+    it('cuts the title to 200 characters, counting an emoji as one', async () => {
+      routes({
+        [LIST]: () => json({ items: [], count: 0 }),
+        [CREATE]: () =>
+          json({ id: ID_NEW, title: 'New conversation', updated_at: '2026-10-06T12:00:00Z' }, 201),
+        [askPath(ID_NEW)]: askRoute(answerFrames),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByTestId('conversations-empty');
+      await user.click(screen.getByRole('button', { name: '+ New chat' }));
+      await screen.findByLabelText('Message');
+      const emoji = String.fromCodePoint(0x1f600);
+      await user.click(screen.getByLabelText('Message'));
+      await user.paste(emoji.repeat(150) + 'x'.repeat(100));
+      await user.keyboard('{Enter}');
+      await screen.findByText('An answer');
+      await waitFor(() => expect(rows()[0]).toHaveTextContent(emoji));
+      const label = Array.from(rows()[0].textContent ?? '');
+      expect(label.filter((c) => c === emoji)).toHaveLength(150);
+      expect(label.filter((c) => c === 'x')).toHaveLength(50);
+    });
+
+    it('leaves the list alone when the answer fails, and the input comes back', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [open(ID_B)]: () => json(detail(ID_B, 'Error contract', [])),
+        [askPath(ID_B)]: askRoute([sseFrame('error', { error_kind: 'timeout' })]),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await user.click(await screen.findByRole('button', { name: /Error contract/ }));
+      await screen.findByLabelText('Message');
+      await user.type(screen.getByLabelText('Message'), 'anything{Enter}');
+      expect(await screen.findByRole('alert')).toHaveTextContent('timeout');
+      expect(rows()[0]).toHaveTextContent('Trace ids');
+      await waitFor(() => expect(screen.getByLabelText('Message')).toBeEnabled());
+    });
+
+    it('does not send a question over the limit', async () => {
+      const ask = vi.fn(askRoute(answerFrames));
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [open(ID_B)]: () => json(detail(ID_B, 'Error contract', [])),
+        [askPath(ID_B)]: ask,
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await user.click(await screen.findByRole('button', { name: /Error contract/ }));
+      await user.click(await screen.findByLabelText('Message'));
+      await user.paste('y'.repeat(4001));
+      expect(screen.getByTestId('question-counter')).toHaveTextContent('4,001 / 4,000');
+      await user.keyboard('{Enter}');
+      expect(ask).not.toHaveBeenCalled();
+    });
+  });
 });

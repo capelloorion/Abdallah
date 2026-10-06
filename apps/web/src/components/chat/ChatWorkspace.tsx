@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { StreamError } from '@/lib/chat-client';
+import { sanitizeText, type StreamError } from '@/lib/chat-client';
+import { DEFAULT_CONVERSATION_TITLE, MAX_TITLE_UNITS } from '@/lib/conversation-limits';
 import {
   askEndpoint,
   createConversation,
@@ -121,6 +122,28 @@ export function ChatWorkspace() {
     });
   }, []);
 
+  /**
+   * An answer finished: the chat moves to the top of the list, and one still called "New
+   * conversation" takes its first question (cut to 200 characters) as its title — the rule the api
+   * applies when it stores the answer, so the list matches what a reload shows.
+   */
+  const answered = useCallback((id: string, question: string) => {
+    const firstQuestion = sanitizeText(
+      Array.from(question).slice(0, MAX_TITLE_UNITS).join(''), // code points, as the api cuts
+      4 * MAX_TITLE_UNITS, // sanitizing only removes characters; never cut a surrogate pair here
+    ).trim();
+    const now = new Date().toISOString();
+    setItems((prev) => {
+      const current = prev.find((c) => c.id === id);
+      if (!current) return prev;
+      const title =
+        current.title === DEFAULT_CONVERSATION_TITLE && firstQuestion
+          ? firstQuestion
+          : current.title;
+      return [{ ...current, title, updated_at: now }, ...prev.filter((c) => c.id !== id)];
+    });
+  }, []);
+
   const newChat = useCallback(() => {
     const action = ++actionRef.current;
     createRef.current?.abort();
@@ -197,10 +220,15 @@ export function ChatWorkspace() {
             <ChatPanel
               key={thread.thread.id}
               endpoint={askEndpoint(thread.thread.id)}
-              title={thread.thread.title.trim() || 'Untitled chat'}
+              title={
+                items.find((c) => c.id === thread.thread.id)?.title.trim() ||
+                thread.thread.title.trim() ||
+                'Untitled chat'
+              }
               initialMessages={thread.thread.messages}
               autoFocus={focusInput}
               headingLevel={2}
+              onAnswered={(question) => answered(thread.thread.id, question)}
             />
           </>
         ) : null}

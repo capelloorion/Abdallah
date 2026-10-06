@@ -25,6 +25,9 @@ export const MAX_QUESTION_CHARS = 4000;
  */
 export const MAX_ASK_BODY_BYTES = 65_536;
 
+/** What the api calls a conversation until its first answer gives it a title. */
+export const DEFAULT_CONVERSATION_TITLE = 'New conversation';
+
 /** A canonical hyphenated UUID — what the api returns as a conversation id. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function isConversationId(value: string): boolean {

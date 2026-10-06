@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { askStream } from '@/lib/chat-client';
+import { MAX_QUESTION_CHARS } from '@/lib/conversation-limits';
 import { ChatThread } from './ChatThread';
 import { MessageInput } from './MessageInput';
 import type { ChatMessage } from './types';
@@ -16,6 +17,10 @@ interface Props {
   autoFocus?: boolean;
   /** The heading level of the title; the page owns the h1 when it embeds the panel. */
   headingLevel?: 1 | 2;
+  /** The longest question the input accepts, in characters. */
+  maxQuestionChars?: number;
+  /** Called with the question once its answer is complete (`done`) — not on an error or a cancel. */
+  onAnswered?: (question: string) => void;
 }
 
 /**
@@ -35,6 +40,8 @@ export function ChatPanel({
   initialMessages,
   autoFocus = false,
   headingLevel = 1,
+  maxQuestionChars = MAX_QUESTION_CHARS,
+  onAnswered,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const Heading = headingLevel === 1 ? 'h1' : 'h2';
@@ -78,13 +85,15 @@ export function ChatPanel({
           }
           patch((m) => ({ ...m, text: m.text + text }));
         },
-        onDone: ({ citations }) =>
+        onDone: ({ citations }) => {
           patch((m) => ({
             ...m,
             pending: false,
             // a `done` frame may list no citations of its own: keep the ones from `sources`
             citations: citations.length ? citations : m.citations,
-          })),
+          }));
+          if (!capped) onAnswered?.(question);
+        },
         onError: ({ code, traceId }) => {
           if (code !== 'aborted') {
             patch((m) => ({ ...m, pending: false, error: code, traceId }));
@@ -112,7 +121,12 @@ export function ChatPanel({
       <div className="min-h-[16rem] rounded-2xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
         <ChatThread messages={messages} />
       </div>
-      <MessageInput onSubmit={send} disabled={busy} autoFocus={autoFocus} />
+      <MessageInput
+        onSubmit={send}
+        disabled={busy}
+        autoFocus={autoFocus}
+        maxChars={maxQuestionChars}
+      />
     </section>
   );
 }

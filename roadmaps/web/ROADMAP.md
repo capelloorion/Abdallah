@@ -169,7 +169,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 2.4 — Send a question in a conversation
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [2.3]
 - **layers:** [ui]
 - **acceptance:**
@@ -179,11 +179,20 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - a new conversation titled "New conversation" shows the first question (cut to 200 characters) as its title after the first answer, matching the api
   - works against the `MOCK_UPSTREAM=true` fixtures, including the error fixture
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **488 passed** (the new cases are in `MessageInput.test.tsx`, `ChatPanel.test.tsx` and `ChatWorkspace.test.tsx`)
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` lists `○ /chat`
+  - by hand, mock mode (`MOCK_UPSTREAM=true`, `pnpm -C apps/web dev`, http://localhost:3000/chat):
+    - **+ New chat** → the box shows `0 / 4,000`; type and the count follows; paste 4,001 characters → the counter turns red "too long to send", **Send** is disabled and Enter does nothing; delete one and it sends
+    - ask → **Send** is disabled while the answer streams, the Sources block appears with the first tokens, and when it finishes the chat is the top row, selected, with your question as its title (the mock list is stateless: a reload brings the old rows back)
+    - open the first existing chat and ask → it stays on top and keeps its title
+    - error path: ask `[mock:error] hello` → the red line shows the code and trace id, the list does not change, and the box is usable again
 - **needs_human:**
-  - none
+  - none (the page itself stays under the manual Playwright smoke already listed on web 2.3)
 - **notes:**
   - 2026-10-06 — planned. A reload shows a conversation's stored messages only; an interrupted answer (disconnect before `done`) is not stored by the api (`api:3.1`), so it will not reappear.
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test. Review run: `code-reviewer` (no blockers; fixed: keyboard focus handed back after an answer, "too long" announced to screen readers). Files: `apps/web/src/components/chat/{MessageInput,ChatPanel,ChatWorkspace}.tsx` + tests, `apps/web/src/lib/conversation-limits.ts`, `apps/web/src/mocks/conversations.ts` (re-exports the default title), docs, version 0.6.0 → 0.7.0. The title rule mirrors api 2.2 (first question cut to 200 characters while the title is still "New conversation"); until that api item exists, a reload in real mode shows whatever the api stored. The "Stop" button stays unbuilt (see web 2.1 notes).
+  - 2026-10-06 — confirmed by the developer (done).
 
 ### 2.5 — Conversation drawer on small screens
 

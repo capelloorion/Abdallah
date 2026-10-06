@@ -7,6 +7,22 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-06
+
+### Added
+
+- The question box shows a **`n / 4,000` counter** (characters counted the way the api counts them: an emoji is one, surrounding spaces are not counted) and does not send an empty or over-long question, by button or Enter; the text is kept and the counter turns red with "too long to send". The box is described by the counter for screen readers (`aria-describedby`, `aria-invalid`). `MessageInput` takes `maxChars`; `ChatPanel` takes `maxQuestionChars` (default 4,000) and `onAnswered(question)`.
+- When an answer is complete (`done`), the conversation **moves to the top of the list** with a fresh time, and one still called "New conversation" takes its **first question, cut to 200 characters, as its title** (the rule the api applies when it stores the answer), in the list and in the panel heading. A failed or cancelled answer changes nothing in the list and the input comes back.
+- `DEFAULT_CONVERSATION_TITLE` in `src/lib/conversation-limits.ts` (the mock fixtures re-export it).
+
+### Hardening from review
+
+- A disabled box drops keyboard focus, so `MessageInput` hands focus back when it is enabled again (an answer finished, failed or was cancelled) if the person was typing in it — and only if focus was lost, never if they moved elsewhere. "Too long to send" is also announced through a status region (once, not on every keystroke).
+
+### Tests
+
+- `MessageInput`, `ChatPanel` and `ChatWorkspace` tests for the counter, the limit (button, Enter, paste, emoji, exactly the limit), `onAnswered` only on `done`, moving to the top, the first-question title (once only, cut at 200 code points), and an unchanged list on error. Each guard was proven by removing it and watching a test fail.
+
 ## [0.6.0] — 2026-10-06
 
 ### Added
