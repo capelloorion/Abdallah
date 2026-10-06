@@ -1,4 +1,12 @@
-import { apiBase, bff, errorResponse, proxyJson, readTextCapped } from '@/lib/bff-json';
+import {
+  apiBase,
+  bff,
+  bodyReadError,
+  errorResponse,
+  isJsonRequest,
+  proxyJson,
+  readTextCapped,
+} from '@/lib/bff-json';
 import {
   MAX_CREATE_BODY_BYTES,
   MAX_LIST_LIMIT,
@@ -58,11 +66,6 @@ function parseCreateBody(text: string): CreateBody {
   return trimmed === '' ? {} : { title: trimmed };
 }
 
-function isJson(req: Request): boolean {
-  const type = (req.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-  return type === 'application/json';
-}
-
 /**
  * POST /api/v1/conversations → api POST /v1/conversations
  *
@@ -73,13 +76,9 @@ function isJson(req: Request): boolean {
  */
 export async function POST(req: Request): Promise<Response> {
   return bff(req, ROUTE, async ({ traceId }) => {
-    if (!isJson(req)) return errorResponse('unsupported_media_type', 415, traceId);
+    if (!isJsonRequest(req)) return errorResponse('unsupported_media_type', 415, traceId);
     const read = await readTextCapped(req, MAX_CREATE_BODY_BYTES);
-    if (!read.ok) {
-      if (read.reason === 'too_large') return errorResponse('payload_too_large', 413, traceId);
-      if (read.reason === 'timeout') return errorResponse('request_timeout', 408, traceId);
-      return errorResponse('bad_request', 400, traceId);
-    }
+    if (!read.ok) return bodyReadError(read.reason, traceId);
     const body = parseCreateBody(read.text);
     if ('invalid' in body) return errorResponse('validation_error', 422, traceId);
     log('info', 'bff inbound', { route: ROUTE, method: 'POST' });

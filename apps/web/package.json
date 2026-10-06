@@ -1,7 +1,7 @@
 {
   "name": "@team-assistant/web",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Team Assistant — Next.js BFF + UI. Part of the brandless starter template built by Orion Digital Solutions for the Diriyah Company AI team.",
   "author": {
     "name": "Orion Digital Solutions",

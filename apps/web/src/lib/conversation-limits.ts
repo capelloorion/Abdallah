@@ -15,3 +15,18 @@ export const BODY_READ_TIMEOUT_MS = 5000;
 
 /** The api's `NVARCHAR(200)`; a JS string's `.length` counts UTF-16 code units, the same unit. */
 export const MAX_TITLE_UNITS = 200;
+
+/** The api's `question` limit, in characters (Unicode code points — an emoji counts once). */
+export const MAX_QUESTION_CHARS = 4000;
+
+/**
+ * A `{ "question": … }` body. 4000 code points can reach 48 KB when a client \u-escapes every
+ * astral character, so the cap leaves room for that and nothing more.
+ */
+export const MAX_ASK_BODY_BYTES = 65_536;
+
+/** A canonical hyphenated UUID — what the api returns as a conversation id. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isConversationId(value: string): boolean {
+  return UUID.test(value);
+}

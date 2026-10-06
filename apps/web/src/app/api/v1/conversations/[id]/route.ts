@@ -1,4 +1,5 @@
 import { apiBase, bff, errorResponse, proxyJson } from '@/lib/bff-json';
+import { isConversationId } from '@/lib/conversation-limits';
 import { log } from '@/lib/logger';
 import { isMockUpstream, mockJson } from '@/lib/mocks';
 import { conversationDetailFixture } from '@/mocks/conversations';
@@ -7,7 +8,6 @@ export const dynamic = 'force-dynamic';
 
 /** A dynamic segment must pass its pattern as the route class, or metric cardinality is unbounded. */
 const ROUTE_CLASS = '/api/v1/conversations/[id]';
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/v1/conversations/{id} → api GET /v1/conversations/{id}
@@ -22,7 +22,7 @@ export async function GET(
 ): Promise<Response> {
   return bff(req, ROUTE_CLASS, async ({ traceId }) => {
     const { id } = await context.params;
-    if (!UUID.test(id)) return errorResponse('validation_error', 422, traceId);
+    if (!isConversationId(id)) return errorResponse('validation_error', 422, traceId);
     const conversationId = id.toLowerCase();
     log('info', 'bff inbound', { route: ROUTE_CLASS, method: 'GET' });
     if (isMockUpstream()) {

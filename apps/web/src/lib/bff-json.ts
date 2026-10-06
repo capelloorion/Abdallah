@@ -1,6 +1,6 @@
 import { log } from '@/lib/logger';
 import { BODY_READ_TIMEOUT_MS } from '@/lib/conversation-limits';
-import { type BffContext, fetchUpstream, withBff } from '@/lib/trace';
+import { type BffContext, fetchUpstream, isValidTraceId, withBff } from '@/lib/trace';
 
 /** The api's base URL — server-side env only (the BFF rule), never `NEXT_PUBLIC_*`. */
 export function apiBase(): string {
@@ -13,7 +13,12 @@ export function apiBase(): string {
  * something other than JSON.
  */
 export function hardenResponse(res: Response): Response {
-  res.headers.set('cache-control', 'no-store');
+  // A stream keeps its own `no-cache, no-transform` (which also stops intermediaries from
+  // compressing or buffering it); everything else is forced to `no-store`, whatever it carried.
+  const stream = (res.headers.get('content-type') ?? '')
+    .toLowerCase()
+    .startsWith('text/event-stream');
+  if (!stream || !res.headers.has('cache-control')) res.headers.set('cache-control', 'no-store');
   res.headers.set('x-content-type-options', 'nosniff');
   return res;
 }
@@ -133,4 +138,58 @@ export async function readTextCapped(
     clearTimeout(timer);
   }
   return { ok: true, text: new TextDecoder().decode(Buffer.concat(chunks)) };
+}
+
+/** True when the request declares `content-type: application/json` (parameters such as charset ignored). */
+export function isJsonRequest(req: Request): boolean {
+  const type = (req.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+  return type === 'application/json';
+}
+
+/** The response for a body that could not be read (see `readTextCapped`). */
+export function bodyReadError(
+  reason: 'too_large' | 'timeout' | 'aborted',
+  traceId: string,
+): Response {
+  if (reason === 'too_large') return errorResponse('payload_too_large', 413, traceId);
+  if (reason === 'timeout') return errorResponse('request_timeout', 408, traceId);
+  return errorResponse('bad_request', 400, traceId);
+}
+
+/**
+ * Relay an api error that arrived BEFORE a stream started (a 404, 422, 413 or 503) with its status
+ * unchanged. Only `error` (a short snake_case code) and `trace_id` are relayed, so a field a
+ * future api adds to an error body (a stack, a request echo) never reaches the browser. A body
+ * that is not that shape becomes `502 upstream_error`; a deadline hit while reading it becomes
+ * `502 upstream_unreachable`, as in `proxyJson`.
+ */
+export async function relayJsonError(
+  res: Response,
+  traceId: string,
+  route: string,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    void res.body?.cancel().catch(() => undefined);
+    if (isTimeoutOrAbort(err)) {
+      log('error', 'bff upstream error reply timed out', { route, status: res.status });
+      return errorResponse('upstream_unreachable', 502, traceId, { target: 'api' });
+    }
+    log('error', 'bff upstream error reply was not json', { route, status: res.status });
+    return errorResponse('upstream_error', 502, traceId, { target: 'api' });
+  }
+  const record = body !== null && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const code = record.error;
+  if (typeof code !== 'string' || !/^[a-z][a-z0-9_]{1,63}$/.test(code)) {
+    log('error', 'bff upstream error reply had an unexpected shape', { route, status: res.status });
+    return errorResponse('upstream_error', 502, traceId, { target: 'api' });
+  }
+  log('info', 'bff upstream rejected', { route, status: res.status });
+  const upstreamTrace = record.trace_id;
+  return Response.json(
+    { error: code, trace_id: isValidTraceId(upstreamTrace as string) ? upstreamTrace : traceId },
+    { status: res.status },
+  );
 }

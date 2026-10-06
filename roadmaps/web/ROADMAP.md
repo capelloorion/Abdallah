@@ -54,7 +54,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 1.2 — Ask-stream BFF route
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [1.1]
 - **layers:** [bff]
 - **acceptance:**
@@ -64,13 +64,30 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - with `MOCK_UPSTREAM=true` the route streams a paced fixture (citations with title and path) and a second fixture that ends in an `error` frame, selectable by a fixed marker in the question; works against fixtures until `api:3.1` lands
   - the response carries `x-trace-id`; tested in both modes
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **308 passed** (api: 315 passed); the new file is `apps/web/src/app/api/v1/conversations/ask-stream.test.ts` (70 tests, both mock and real modes)
+  - `pnpm -C apps/web typecheck` clean, and `pnpm -C apps/web build` lists `ƒ /api/v1/conversations/[id]/ask/stream` (delete `apps/web/.next` afterwards before running `next dev`)
+  - mock mode by hand (`MOCK_UPSTREAM=true` in `apps/web/.env.local`, `pnpm -C apps/web dev`):
+    - `curl -N -X POST localhost:3000/api/v1/conversations/3f2b9c1e-5a47-4d8e-9b6a-1c0d2e3f4a51/ask/stream -H "content-type: application/json" -d '{"question":"How does trace_id work?"}'` → frames arrive paced: `event: sources` with `"citations":[{"title":"Tracing","path":"docs/architecture/tracing.md"},…]`, then many `event: token`, then `event: done`
+    - the same with `"question":"why? [mock:error]"` → a few tokens, then `event: error` with `"error_kind":"timeout"` and no `done`
+    - `…/00000000-0000-4000-8000-000000000000/ask/stream` → `404 {"error":"not_found",…}` (no stream)
+    - empty `"question":""` → `400 bad_request`; a 4001-character question → `413 payload_too_large`; no `content-type` header → `415`; id `abc` → `422`
+  - real mode needs the api route (api 3.1, not built yet): until then a real call gets the api's `404`, which the BFF relays as `{"error":"not_found","trace_id":…}`
+  - disconnect check (needs a real api stream, so after api 3.1): start a stream, close the tab or `Ctrl-C` curl, and confirm the api logs a cancelled request
 - **needs_human:**
-  - none
+  - decide the status code for an invalid question: the roadmap acceptance said `400`, and it is `400 bad_request` (the api's own default code for 400) — web 1.1 uses `422 validation_error` for bad input, which is also what the api returns for validation failures. Say if you want this route to use `422` too; it is a one-line change per case
+  - the real-api checks above (the api's ask route is api 3.1; api 2.2 first needs the team's acceptance of the shared-conversations threat model)
+  - verify the browser-disconnect abort under the real Next server once an api stream exists (unit tests simulate the signal; Next 16 builds `req.signal` from the response `close` event)
 - **notes:**
   - 2026-10-06 — planned. The BFF stream timeout (`STREAM_TIMEOUT_MS`, 300 s) already exceeds the api's 60 s, so no change is needed. The JSON `/ask` route is not planned here: the wireframe only uses the stream. The draft B4a says the BFF mirrors every route — confirm that is not wanted for `/ask`. `/v1/admin/ingest` is deliberately not mirrored; if the team decides otherwise (`api` Q1), add a new item.
 
 ## Phase 2 — Chat page (F1, F2)
+
+- 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/web/src/app/api/v1/conversations/[id]/ask/stream/route.ts` (new), `apps/web/src/app/api/v1/conversations/ask-stream.test.ts` (new), `apps/web/src/lib/bff-json.ts` (`isJsonRequest`, `bodyReadError`, `relayJsonError`; `hardenResponse` is stream-aware), `apps/web/src/lib/conversation-limits.ts`, `apps/web/src/mocks/conversations.ts` (stream fixtures, error marker, reserved not-found id), small refactors of the two existing conversation routes onto the shared helpers, `docs/reference/http-api.md`, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.2.0 → 0.3.0.
+  - 2026-10-06 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: a literal `$1` my docs script left in `http-api.md`, `hardenResponse` could not be fail-open (a response that arrives already cacheable now gets `no-store`; only a real event stream keeps its own header), api error bodies are relayed as `{error, trace_id}` only, only a `200` with an exact `text/event-stream` media type is streamed, question length counted in code points with a fast path, a browser that left is logged at info not error, and tests for unbuffered relay, the escaped-astral body, timeout composition and the `hardenResponse` unit cases (each new check proven by a mutation).
+  - 2026-10-06 — for web 2.1 (client): `askStream` must read the body of a non-OK `text/event-stream` response (the unreachable-api `502` carries an `error` frame whose `error_kind` is otherwise lost) and the JSON `{error, trace_id}` of a pre-stream error; it must read `citations` (the template client still reads `sources`); and it must treat a stream that ends without `done` or `error` as a failure — a stream cut after headers has no terminal frame, so the partial answer must never be shown as complete. Key on the status class, not on the exact error code.
+  - 2026-10-06 — NOT done here (threat model P2/P4/P6): a rate limit and a concurrent-stream cap on this cost-bearing route (a model call per request, up to 300 s per stream — High until P2, acceptable only on the internal network), a byte cap on the api's error replies, CSP and security headers, a stream-end log/metric (outcome, duration, disconnect — `withBff` measures only time to headers). The template's older `/api/v1/assistant/ask[/stream]` routes have none of these caps either; web 3.2 retires them. `MOCK_UPSTREAM` is refused only when `APP_ENV=prod`, so make sure it is never set in any deployed environment (nothing sets it today).
+  - 2026-10-06 — confirmed by the developer (done). The real-api checks and the 400-vs-422 choice (needs_human above) are still open.
 
 ### 2.1 — Citations and error details in the chat client and thread
 

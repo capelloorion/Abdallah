@@ -7,6 +7,37 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-06
+
+### Added
+
+- **Ask-stream BFF route** (roadmap web 1.2): `POST /api/v1/conversations/{id}/ask/stream` relays the api's
+  `sources` → `token`\* → `done` (or terminal `error`) Server-Sent Events unchanged, with `x-trace-id`
+  forwarded and echoed. `sources` and `done` carry `citations: [{ title, path }]`.
+- Checks before anything is forwarded: the `id` is a UUID, `content-type` is `application/json` (`415`), the body
+  is at most 64 KB and arrives within 5 s (`413`, `408`), and `question` is a trimmed, non-empty, well-formed
+  string (`400 bad_request`) of at most 4000 characters — counted in code points like the api, so an emoji is
+  one (`413 payload_too_large`, pending the api's Q5). Only `question` is forwarded; the question is never logged.
+- An api error before the stream starts (`404`, `422`, `413`, `503 ai_unavailable`) keeps its status and JSON
+  body. An unreachable api, a timeout or a redirect → `502` carrying a terminal `error` frame; a 200 that is not an
+  event stream → `502 upstream_error`. If the browser disconnects, the upstream request is aborted so the model
+  call can stop.
+- Mock mode (`MOCK_UPSTREAM=true`): paced `askStreamFrames` with title+path citations, and `askStreamErrorFrames`
+  (tokens, then an `error` frame, no `done`) for a question containing `[mock:error]` — in `src/mocks/conversations.ts`.
+- `src/lib/bff-json.ts`: `isJsonRequest`, `bodyReadError`, `relayJsonError`; `src/lib/conversation-limits.ts`:
+  `MAX_QUESTION_CHARS`, `MAX_ASK_BODY_BYTES`, `isConversationId`.
+
+### Changed
+
+- `hardenResponse` keeps a stream's own `cache-control: no-cache, no-transform` (it keeps intermediaries from
+  compressing or buffering an event stream) but forces `no-store` on everything else, even a response that
+  arrived already marked cacheable.
+- Pre-stream api errors are relayed as `{ error, trace_id }` only; an api error body of any other shape is a
+  `502 upstream_error`. A `200` is streamed only if its media type is exactly `text/event-stream`.
+
+- Tests: `src/app/api/v1/conversations/ask-stream.test.ts` (70 tests: both modes, every pre-forward check, pass-through of
+  api errors, unreachable/timeout/redirect, disconnect abort, trace echo, no question in logs).
+
 ## [0.2.0] — 2026-10-06
 
 ### Added

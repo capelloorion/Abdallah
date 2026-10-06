@@ -34,8 +34,14 @@ URL.
   through, and serve `src/mocks/conversations.ts` with `MOCK_UPSTREAM=true`. `src/lib/bff-json.ts` —
   `bff` (`withBff` + `no-store`/`nosniff`), `proxyJson` (JSON in, JSON out, bounded `502`s, no redirects,
   no upstream headers relayed), `errorResponse`, `readTextCapped` (size- and time-capped body read);
-  `src/lib/conversation-limits.ts` — the limits (a `route.ts` may export only handlers). `POST` requires
-  `content-type: application/json` (`415`).
+  `src/lib/conversation-limits.ts` — the limits (a `route.ts` may export only handlers). `POST` routes
+  require `content-type: application/json` (`415`).
+- `src/app/api/v1/conversations/[id]/ask/stream/route.ts` — the **ask-stream BFF route** (web 1.2). It checks
+  the id, the content type, the body and a 4000-character question (counted in code points), relays the
+  api's SSE with `streamUpstream` + `proxyStream`, and aborts the upstream call when the browser disconnects.
+  An api error before the stream keeps its status (only `error` + `trace_id` relayed); an unreachable api is
+  a `502` carrying an `error` frame. Mock mode streams `askStreamFrames` (`askStreamErrorFrames` for a
+  `[mock:error]` question).
 - `src/components/chat/` — `ChatThread`, `MessageInput`, `ChatPanel` (Tailwind, RTL-tested).
 - `src/lib/stream.ts` (`streamUpstream`/`proxyStream`), `src/lib/sse.ts` (frame parser/builder),
   `src/lib/chat-client.ts` (`askStream`, browser → BFF), `src/lib/mocks.ts`

@@ -173,28 +173,44 @@ liveness + observability state (`apps/web/src/app/health/route.ts`).
 
 ### BFF: `/api/v1/conversations` (chat history)
 
-Source: `apps/web/src/app/api/v1/conversations/route.ts` and `[id]/route.ts`; shared helper
-`src/lib/bff-json.ts`. Each handler is wrapped in `withBff`, calls the api only through
-`fetchUpstream`, and passes the api's status and `{ error, trace_id }` body through unchanged.
+Source: `apps/web/src/app/api/v1/conversations/` (`route.ts`, `[id]/route.ts`, `[id]/ask/stream/route.ts`);
+shared helpers `src/lib/bff-json.ts` and `src/lib/conversation-limits.ts`. Each handler is wrapped in
+`withBff`; upstream calls go through `fetchUpstream` (JSON) or `streamUpstream` (the SSE route) — never a bare
+`fetch`. A JSON route passes the api's status and body through; the stream route relays the api's events.
 
-| Method | BFF route                    | Upstream                     | What the BFF checks first                                                                                                                                                                                                                                                                |
-| ------ | ---------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/conversations`      | `GET /v1/conversations`      | `limit`, if present, is an integer 1–100 (else `422 validation_error`); only the validated `limit` is forwarded                                                                                                                                                                          |
-| POST   | `/api/v1/conversations`      | `POST /v1/conversations`     | `content-type: application/json` (else `415 unsupported_media_type`); body ≤ 4 KB (else `413 payload_too_large`) and received within 5 s (else `408 request_timeout`); a JSON object with an optional well-formed string `title` ≤ 200 UTF-16 units; only a trimmed `title` is forwarded |
-| GET    | `/api/v1/conversations/{id}` | `GET /v1/conversations/{id}` | `id` is a UUID (else `422 validation_error`) — it is placed in the upstream path, so nothing else may reach it                                                                                                                                                                           |
+| Method | BFF route                               | Upstream                                       | What the BFF checks first                                                                                                                                                                                                                                                                                                                  |
+| ------ | --------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/v1/conversations`                 | `GET /v1/conversations`                        | `limit`, if present, is an integer 1–100 (else `422 validation_error`); only the validated `limit` is forwarded                                                                                                                                                                                                                            |
+| POST   | `/api/v1/conversations`                 | `POST /v1/conversations`                       | `content-type: application/json` (else `415 unsupported_media_type`); body ≤ 4 KB (else `413 payload_too_large`) and received within 5 s (else `408 request_timeout`); a JSON object with an optional well-formed string `title` ≤ 200 UTF-16 units; only a trimmed `title` is forwarded                                                   |
+| GET    | `/api/v1/conversations/{id}`            | `GET /v1/conversations/{id}`                   | `id` is a UUID (else `422 validation_error`)                                                                                                                                                                                                                                                                                               |
+| POST   | `/api/v1/conversations/{id}/ask/stream` | `POST /v1/conversations/{id}/ask/stream` (SSE) | `id` is a UUID (`422`); `content-type: application/json` (`415`); body ≤ 64 KB within 5 s (`413`, `408`); `{ "question": string }` — trimmed, non-empty, well-formed (else `400 bad_request`) and at most 4000 **characters** (code points, as the api counts; else `413 payload_too_large`, pending api Q5); only `question` is forwarded |
 
 - An unreachable api, a timeout (while connecting or while reading the reply) or a redirect →
   `502 { error: "upstream_unreachable", target: "api", trace_id }`; an api reply that is not JSON (a proxy
   page, an empty `204`) → `502 { error: "upstream_error", target: "api", trace_id }`. Neither relays the
   upstream body, and no upstream header (cookies, `server`) is relayed either.
-- Every response carries `cache-control: no-store` and `x-content-type-options: nosniff` — the payloads
-  are shared user content.
+- **Stream route.** It relays the api's Server-Sent Events unchanged: `sources`
+  (`{ citations: [{ title, path }], count }`), `token` (`{ text }`)…, then `done`
+  (`{ citations, input_tokens, output_tokens }`) or a terminal `error` (`{ error_kind }`).
+  - An api error _before_ the stream starts (`404`, `422`, `413`, `503 ai_unavailable`…) keeps its status;
+    only its `error` and `trace_id` are relayed (an api reply of any other shape → `502 upstream_error`).
+  - An unreachable api, a timeout or a redirect → `502` whose body is a single `error` frame
+    (`error_kind`: `upstream_unreachable` or `timeout`). Only a `200` whose media type is exactly
+    `text/event-stream` is streamed; anything else → `502 { error: "upstream_error" }`.
+  - If the browser disconnects, the upstream request is aborted so the model call can stop. A stream that
+    dies _after_ headers were sent just ends — a client must treat "ended without `done` or `error`" as a
+    failure.
+- JSON responses carry `cache-control: no-store`; a stream keeps `no-cache, no-transform`. All carry
+  `x-content-type-options: nosniff` — the payloads are shared user content.
 - The `id` must be a canonical hyphenated UUID; the api also accepts un-hyphenated and braced forms, the
   BFF does not (the UI only sends ids the api returned).
-- With `MOCK_UPSTREAM=true` (refused in `prod`) the routes serve `src/mocks/conversations.ts` — typed
-  from the generated contract — with `x-mock-upstream: true`. The mock is stateless: `POST` returns a
-  fresh conversation but the list does not grow, and an unknown id answers `404 not_found`.
-- Titles and message text are user content and are never logged.
+- With `MOCK_UPSTREAM=true` (refused in `prod`) the routes serve `src/mocks/conversations.ts` — typed from the
+  generated contract — with `x-mock-upstream: true`. The mock is stateless: `POST` returns a fresh
+  conversation but the list does not grow, and a mocked ask is not stored. `GET …/{id}` answers `404
+not_found` for an unknown id; the stream route streams for any well-formed id except
+  `00000000-0000-4000-8000-000000000000` (a `404` before any stream), and a question containing
+  `[mock:error]` ends in an `error` frame instead of `done`.
+- Titles, questions and message text are user content and are never logged.
 
 ## api error contract (`apps/api`, `app/errors.py`)
 

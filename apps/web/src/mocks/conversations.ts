@@ -1,4 +1,5 @@
 import type { components } from '@/lib/api-types';
+import { sseFrame } from '@/lib/sse';
 
 /**
  * Fixtures for the conversation BFF routes (`/api/v1/conversations[/{id}]`), served only when
@@ -16,6 +17,8 @@ export const DEFAULT_CONVERSATION_TITLE = 'New conversation';
 export const TRACE_CONVERSATION_ID = '3f2b9c1e-5a47-4d8e-9b6a-1c0d2e3f4a51';
 export const ERRORS_CONVERSATION_ID = '7a1d4e92-0b3c-4f65-8e21-9d8c7b6a5f42';
 export const EMPTY_CONVERSATION_ID = 'c5e8a0b7-2d94-4a13-b7f6-4e3d2c1b0a93';
+/** In mock mode, asking in this conversation answers `404 not_found` before any stream starts. */
+export const NOT_FOUND_CONVERSATION_ID = '00000000-0000-4000-8000-000000000000';
 
 export const conversationFixtures: Schemas['ConversationDetail'][] = [
   {
@@ -109,3 +112,39 @@ export function conversationCreatedFixture(title?: string): Schemas['Conversatio
 export function conversationDetailFixture(id: string): Schemas['ConversationDetail'] | undefined {
   return conversationFixtures.find((c) => c.id === id.toLowerCase());
 }
+
+/**
+ * The frames `POST /v1/conversations/{id}/ask/stream` sends: `sources` → `token`* → `done`.
+ * The wire format is not part of the OpenAPI contract (it is SSE), so the shapes below follow
+ * `apps/api/app/ai/streaming.py`; the citations are typed from the contract.
+ */
+type Citation = Schemas['Citation'];
+
+export const ASK_MOCK_CITATIONS: Citation[] = [
+  { title: 'Tracing', path: 'docs/architecture/tracing.md' },
+  { title: 'The observability contract', path: '.claude/rules/60-observability.md' },
+];
+
+const ASK_MOCK_ANSWER =
+  'The trace id is minted by the BFF [1] and forwarded unchanged to the api on the x-trace-id header [2].';
+
+function words(text: string): string[] {
+  return text.split(' ').map((word) => sseFrame('token', { text: `${word} ` }));
+}
+
+/** A complete answer. */
+export const askStreamFrames: string[] = [
+  sseFrame('sources', { citations: ASK_MOCK_CITATIONS, count: 2 }),
+  ...words(ASK_MOCK_ANSWER),
+  sseFrame('done', { citations: ASK_MOCK_CITATIONS, input_tokens: 42, output_tokens: 24 }),
+];
+
+/** An answer cut off by a model failure: some tokens, then a terminal `error` frame (no `done`). */
+export const askStreamErrorFrames: string[] = [
+  sseFrame('sources', { citations: ASK_MOCK_CITATIONS, count: 2 }),
+  ...words('The trace id is minted by the').slice(0, 4),
+  sseFrame('error', { error_kind: 'timeout' }),
+];
+
+/** Put this anywhere in a question, in mock mode, to get `askStreamErrorFrames`. */
+export const ASK_MOCK_ERROR_MARKER = '[mock:error]';
