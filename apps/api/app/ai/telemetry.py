@@ -155,7 +155,11 @@ def model_call_span(deployment: str, operation: str = "chat") -> Iterator[ModelC
     """
     recorder = ModelCallRecorder(deployment=deployment, operation=operation)
     tracer = trace.get_tracer(_TRACER_NAME)
-    with tracer.start_as_current_span(f"gen_ai.{operation}") as span:
+    # No exception event and no "Type: message" status text on the span: an upstream error
+    # message can quote the request (a question, a search query). ``ai.error_kind`` is bounded.
+    with tracer.start_as_current_span(
+        f"gen_ai.{operation}", record_exception=False, set_status_on_exception=False
+    ) as span:
         try:
             span.set_attribute("gen_ai.system", GEN_AI_SYSTEM)
             span.set_attribute("gen_ai.operation.name", operation)

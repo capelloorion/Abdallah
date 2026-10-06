@@ -24,7 +24,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.errors import ErrorBody
-from app.routers import conversations
+from app.routers import ask, conversations
 
 API_V1_PREFIX = "/v1"
 
@@ -41,3 +41,4 @@ v1_router = APIRouter(
 )
 
 v1_router.include_router(conversations.router)
+v1_router.include_router(ask.router)

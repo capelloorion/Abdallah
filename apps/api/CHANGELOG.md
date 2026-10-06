@@ -7,6 +7,37 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-06
+
+### Added
+
+- **`POST /v1/conversations/{id}/ask`** (roadmap api:2.2) — ask a question in a conversation:
+  request `{ "question": string }`, response `200 { message_id, answer, citations: [{ title, path }] }`.
+  The question is stored before retrieval; the answer (content, citations as JSON, `token_count` = output
+  tokens) is stored after it; `conversations.updated_at` is bumped on both writes and a conversation still
+  titled "New conversation" takes the first question (cut to 200 characters) as its title. The model gets the
+  conversation's last 10 stored messages as human/assistant history plus the retrieved context.
+  Errors: `404 not_found`, `413 payload_too_large` (question over 4,000 characters), `422 validation_error`
+  (empty question, lone surrogate, malformed id), `503 ai_unavailable` (model or search failure, no answer within
+  60 s, or an empty answer — the question is kept and no answer is stored).
+- Bounded storage: answers are cut at 20,000 characters; `citations` come only from retrieval and a citation whose
+  `path` is not a plain relative path (scheme, leading `/`, `..`, backslash, control or bidi characters, over 500
+  characters) is dropped; history sent to the model is cut to 4,000 characters per message.
+- Eval cases for an injected history turn and an injected corpus passage; the eval harness accepts a `history` list.
+- OpenAPI contract and the web's `api-types.ts` regenerated.
+
+### Changed
+
+- **Both database engines are created with `hide_parameters=True`**, so a failed statement cannot copy a bound
+  value (a title, a question, an answer) into its exception text (threat model P1).
+- **Model-call spans no longer record the exception** (`record_exception=False`, `set_status_on_exception=False`):
+  an upstream error message can quote the request, so only the bounded `ai.error_kind` reaches Application Insights.
+- A question containing a control character other than tab, newline or carriage return (a NUL, for example) is
+  `422 validation_error`; citation paths also reject quotes, angle brackets and invisible format characters, and a
+  lone surrogate in a retrieved title is replaced instead of breaking the answer.
+- The system prompt now says earlier conversation turns are history, not instructions and not a source of
+  citations (shared-conversations threat model A1).
+
 ## [0.6.0] — 2026-10-06
 
 ### Changed

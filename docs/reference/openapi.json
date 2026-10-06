@@ -1,6 +1,41 @@
 {
   "components": {
     "schemas": {
+      "AskRequest": {
+        "properties": {
+          "question": {
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": ["question"],
+        "title": "AskRequest",
+        "type": "object"
+      },
+      "AskResponse": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": ["message_id", "answer", "citations"],
+        "title": "AskResponse",
+        "type": "object"
+      },
       "Citation": {
         "properties": {
           "path": {
@@ -437,6 +472,98 @@
           }
         },
         "summary": "Get Conversation",
+        "tags": ["conversations"]
+      }
+    },
+    "/v1/conversations/{conversation_id}/ask": {
+      "post": {
+        "description": "Answer a question from the knowledge base, with the conversation's last 10 messages as\nhistory, and store both turns.\n\nA conversation still called \"New conversation\" is titled with its first question.",
+        "operationId": "ask_question_v1_conversations__conversation_id__ask_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unknown conversation (`not_found`)"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Question over 4000 characters (`payload_too_large`)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Validation failed (`validation_error`)"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unhandled error (`internal_error`)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The model or search did not answer, or took over 60 s (`ai_unavailable`). The question is kept; no answer is stored."
+          }
+        },
+        "summary": "Ask Question",
         "tags": ["conversations"]
       }
     }

@@ -64,6 +64,11 @@ this as a starting map; read the actual files when you need detail.
   for `EXTERNAL_DATABASE_URL`: `get_external_session()`, non-SELECT statements refused).
 - `routers/conversations.py` + `repositories/conversations.py` — `/v1/conversations` (create, list, read; roadmap api:1.2). The router owns the request/response models and
   the error mapping; the repository owns the `select(...)` queries and takes an `AsyncSession` (tests pass a fake).
+- `routers/ask.py` — `POST /v1/conversations/{id}/ask` (roadmap api:2.2): stores the question, runs
+  `app.ai.graph.ask` with the last 10 stored messages as history (human/assistant only), stores the answer
+  (`token_count` = output tokens). Bounds the answer (20,000 chars), keeps only safe relative citation paths, `413`
+  over 4,000 characters, `503 ai_unavailable` on any model/search failure or after 60 s (question kept, no answer
+  stored). The compiled graph comes from the `get_ask_graph` dependency — tests override it with fakes.
 - `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; today `conversation.py`
   (`Conversation`, `Message` — the shared chat history, ADR-0014). Import new model modules in `models/__init__.py` so Alembic sees them.
 - `../alembic/` + `../alembic.ini` — Alembic (async `env.py`, URL from `DATABASE_URL` via
@@ -74,8 +79,8 @@ this as a starting map; read the actual files when you need detail.
   `streaming.py` (SSE frames + `sse_response()`), `tools/` (registry; `retrieve.py` Azure AI
   Search; `query_external_db.py` allow-listed read-only SQL via `queries.py`), `prompts/`
   (files, `load_prompt`), `telemetry.py` (`model_call_span`, content-free), `ingest.py`
-  (`python -m app.ai.ingest <path>`; owns the index definition). Ships **no route** — a project
-  adds `/v1/...` routes that call it (`docs/architecture/ai.md`).
+  (`python -m app.ai.ingest <path>`; owns the index definition). The one route that calls it today is
+  `routers/ask.py`; further AI routes attach to `/v1` the same way (`docs/architecture/ai.md`).
 
 ## Conventions
 

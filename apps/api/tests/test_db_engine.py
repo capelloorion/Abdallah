@@ -63,6 +63,15 @@ def test_engine_is_created_lazily_without_connecting(
     assert no_connect == []
 
 
+def test_engine_hides_bound_parameters_from_errors(
+    monkeypatch: pytest.MonkeyPatch, no_connect: list[tuple[Any, ...]]
+) -> None:
+    """A failed insert must not put a title, question or answer into the exception text."""
+    monkeypatch.setenv("DATABASE_URL", TEST_URL)
+    assert engine_mod.get_engine().sync_engine.hide_parameters is True
+    assert no_connect == []
+
+
 def test_engine_is_a_singleton(
     monkeypatch: pytest.MonkeyPatch, no_connect: list[tuple[Any, ...]]
 ) -> None:

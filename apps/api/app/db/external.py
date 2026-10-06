@@ -72,7 +72,9 @@ def get_external_engine() -> AsyncEngine:
                 "EXTERNAL_DATABASE_URL is not set — the external read-only database is not "
                 "configured for this deployment"
             )
-        engine = sa_asyncio.create_async_engine(settings.external_database_url, pool_pre_ping=True)
+        engine = sa_asyncio.create_async_engine(
+            settings.external_database_url, pool_pre_ping=True, hide_parameters=True
+        )
         event.listen(engine.sync_engine, "before_cursor_execute", _reject_writes)
         _engine = engine
         get_logger("app.db.external").info(

@@ -24,7 +24,7 @@ See [`apps/api/CLAUDE.md`](../../apps/api/CLAUDE.md) → _Database_.
   `MetaData` (`ix_`/`uq_`/`ck_`/`fk_`/`pk_`). Every model subclasses it. Never create a second
   `MetaData`.
 - `engine.py` — `get_engine()` is a **lazy singleton** built with
-  `sa_asyncio.create_async_engine(settings.database_url, pool_pre_ping=True)`. It must **never
+  `sa_asyncio.create_async_engine(settings.database_url, pool_pre_ping=True, hide_parameters=True)` (`hide_parameters` keeps bound values — a title, a question — out of exception text). It must **never
   connect at import or startup** — no `await conn.execute` in `lifespan`, no `engine.begin()` in
   module scope. `dispose_engine()` is awaited on shutdown and is idempotent. **Resolve
   `create_async_engine` through the module attribute at call time** (`from sqlalchemy.ext import

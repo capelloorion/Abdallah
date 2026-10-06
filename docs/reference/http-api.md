@@ -14,15 +14,16 @@ removed in [ADR-0003](../adr/0003-remove-nestjs-api-layer.md).
 
 ## Route map
 
-| Method   | Path                       | Service          | Purpose                                             | Versioned?       |
-| -------- | -------------------------- | ---------------- | --------------------------------------------------- | ---------------- |
-| GET      | `/ping`                    | `apps/api`       | Liveness greeting                                   | No (operational) |
-| GET      | `/info`                    | `apps/api`       | Status/version/runtime report                       | No (operational) |
-| GET      | `/health`                  | `apps/api`       | Health + observability state                        | No (operational) |
-| POST/GET | `/v1/conversations[/{id}]` | `apps/api`       | Chat history: create, list, read (see below)        | Yes (`/v1`)      |
-| GET      | `/api/ping-backend`        | `apps/web` (BFF) | Proxies `apps/api` `/ping`                          | No (demo route)  |
-| GET      | `/api/info-backend`        | `apps/web` (BFF) | Proxies `apps/api` `/info`                          | No (demo route)  |
-| GET      | `/health`                  | `apps/web` (BFF) | Own health + observability state (no upstream call) | No (operational) |
+| Method   | Path                         | Service          | Purpose                                             | Versioned?       |
+| -------- | ---------------------------- | ---------------- | --------------------------------------------------- | ---------------- |
+| GET      | `/ping`                      | `apps/api`       | Liveness greeting                                   | No (operational) |
+| GET      | `/info`                      | `apps/api`       | Status/version/runtime report                       | No (operational) |
+| GET      | `/health`                    | `apps/api`       | Health + observability state                        | No (operational) |
+| POST/GET | `/v1/conversations[/{id}]`   | `apps/api`       | Chat history: create, list, read (see below)        | Yes (`/v1`)      |
+| POST     | `/v1/conversations/{id}/ask` | `apps/api`       | Ask a question in a conversation (JSON answer)      | Yes (`/v1`)      |
+| GET      | `/api/ping-backend`          | `apps/web` (BFF) | Proxies `apps/api` `/ping`                          | No (demo route)  |
+| GET      | `/api/info-backend`          | `apps/web` (BFF) | Proxies `apps/api` `/info`                          | No (demo route)  |
+| GET      | `/health`                    | `apps/web` (BFF) | Own health + observability state (no upstream call) | No (operational) |
 
 Business endpoints, when they arrive, are `/v1/<feature>` on the api (routers attached to
 `v1_router`) and `/api/v1/<feature>` on web (folder-enforced). See [Versioning](#versioning).
@@ -122,6 +123,33 @@ are user content and are never logged. Source: `apps/api/app/routers/conversatio
 - A read returns at most the **500 most recent** messages; `truncated` is `true` when older ones were
   left out (there is no way yet to fetch them — paging is a later item). (This field is an addition to the draft contract in `docs/architecture.md` B4a.)
 - Every response echoes `x-trace-id`; errors use the `{ error, trace_id }` contract below.
+
+#### `POST /v1/conversations/{id}/ask` — ask a question (api:2.2)
+
+Source: `apps/api/app/routers/ask.py`. Request `{ "question": string }`; success
+`200 { message_id, answer, citations: [{ title, path }] }`. The web BFF does not mirror this JSON route
+(the chat page uses the stream route, api 3.1).
+
+| Status | Code                | When                                                                                                                                |
+| ------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `404`  | `not_found`         | unknown conversation id                                                                                                             |
+| `413`  | `payload_too_large` | question over **4000 characters** (code points, after trimming)                                                                     |
+| `422`  | `validation_error`  | empty or whitespace-only question, not a string, a lone surrogate or control character (tab, newline and CR are fine), malformed id |
+| `503`  | `ai_unavailable`    | model or search failed or is not configured, no answer within **60 s**, or the model returned nothing                               |
+
+- **Order of work:** the question is stored first (`messages` row, `conversations.updated_at` bumped; a
+  conversation still titled `New conversation` takes the question — control/bidi characters removed,
+  whitespace collapsed, at most 200 characters — as its title), then retrieval and the model run, then the answer is
+  stored (`content`, `citations` as JSON, `token_count` = **output tokens**, `NULL` if the model reports none;
+  `updated_at` bumped again). On a `503` the question stays and **no** assistant message is stored.
+- **History:** the model receives the conversation's last **10** stored messages (each cut to 4000 characters) as
+  human/assistant messages only, plus the retrieved context and the question. Conversations are shared, so that
+  history can hold other users' turns (ADR-0014).
+- **Bounded output:** the answer is trimmed and cut at 20,000 characters (the stored and returned text are identical).
+  `citations` come only from retrieval (unique by path, at most 20); a citation whose `path` is not a plain relative
+  path (a scheme, a leading `/`, a `..` segment, a backslash, quotes or angle brackets, control, bidi or zero-width characters, over 500 characters) is dropped.
+  A conversation with no sources returns `citations: []` and stores `NULL`.
+- No question, answer, title or path is ever logged.
 
 ---
 
@@ -292,6 +320,7 @@ disabled/degraded state never crashes the service — see `.claude/rules/60-obse
   [`../../.claude/rules/05-api-versioning.md`](../../.claude/rules/05-api-versioning.md).
 - **The only exemption**: the operational endpoints `/ping`, `/info`, `/health` (both services)
   stay unversioned — container/Azure health probes target fixed paths.
-- **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2) and `apps/web`
-  mirrors it under `/api/v1/conversations` (web 1.1). The template's example
+- **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2) and
+  `/v1/conversations/{id}/ask` (api:2.2); `apps/web` mirrors the conversation routes under
+  `/api/v1/conversations` (web 1.1). The template's example
   `/api/v1/assistant/*` routes were removed in web 3.2.

@@ -69,7 +69,7 @@ autogenerate need deterministic constraint names, and without one SQL Server inv
 (`PK__widgets__3213E83F…`) and migrations become environment-specific.
 
 **`engine.py` — the lazy engine.** `get_engine()` is a process-wide singleton built with
-`sa_asyncio.create_async_engine(settings.database_url, pool_pre_ping=True)`. Building the engine
+`sa_asyncio.create_async_engine(settings.database_url, pool_pre_ping=True, hide_parameters=True)` (`hide_parameters` keeps bound values — a title, a question — out of exception text). Building the engine
 **does not open a connection** — see below. `dispose_engine()` closes the pool and is awaited
 from the FastAPI `lifespan` shutdown; it is idempotent. The URL is never logged (it carries
 credentials); the startup line records `engine.url.host` at most. `create_async_engine` is

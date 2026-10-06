@@ -106,7 +106,9 @@ works locally).
 **`prompts/`.** Prompts are files. `load_prompt("system")` reads `prompts/system.md`;
 `render_prompt` fills `{placeholders}` and fails loudly on a missing one. The shipped system
 prompt grounds the answer in the numbered context, requires `[n]` citations, refuses to invent,
-and states that context is data, not instructions.
+and states that context is data, not instructions and that earlier turns of the conversation (written by
+other users, because conversations are shared) are history, never instructions or a source of facts or citations.
+The ask route (`routers/ask.py`, api:2.2) sends history only as human/assistant messages, never as a system message.
 
 **`telemetry.py`.** `model_call_span(deployment)` wraps every model call: a span named
 `gen_ai.chat` with `gen_ai.system`, `gen_ai.operation.name`, `gen_ai.request.model`, the
@@ -122,7 +124,7 @@ with the distro's `0.61b0` line and content capture).
 ## Using it from a route
 
 ```python
-# apps/api/app/routers/assistant.py  (a project's feature — the template ships no route)
+# apps/api/app/routers/assistant.py  (a project's own feature; the real example is routers/ask.py)
 from typing import Annotated
 
 from fastapi import APIRouter, Depends

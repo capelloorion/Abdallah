@@ -25,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Conversation, Message
 from app.models.conversation import DEFAULT_CONVERSATION_TITLE
 
+# The ask route sends this many of the newest stored messages to the model as history.
+HISTORY_MESSAGES = 10
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 100
 # A read returns at most this many messages (the most recent); the response says when it cut.
@@ -96,3 +98,80 @@ async def get_conversation_with_messages(
     return ConversationWithMessages(
         conversation=conversation, messages=list(reversed(newest_first)), truncated=truncated
     )
+
+
+async def get_conversation(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> Conversation | None:
+    """The conversation row alone (no messages), or ``None`` if unknown."""
+    return await session.get(Conversation, conversation_id)
+
+
+async def recent_messages(
+    session: AsyncSession, conversation_id: uuid.UUID, limit: int = HISTORY_MESSAGES
+) -> list[Message]:
+    """The ``limit`` newest messages, oldest first — what the model gets as history.
+
+    Same ordering keys as ``get_conversation_with_messages``, so a question and its answer that
+    share a millisecond still come back in the order they were asked.
+    """
+    statement = (
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.desc(), Message.role.asc(), Message.id)
+        .limit(limit)
+    )
+    return list(reversed((await session.scalars(statement)).all()))
+
+
+async def add_user_message(
+    session: AsyncSession,
+    conversation: Conversation,
+    content: str,
+    *,
+    new_title: str | None = None,
+) -> Message:
+    """Store a question, bump ``updated_at`` and, while the chat is still called "New
+    conversation", give it ``new_title``. One commit, so the changes land together.
+    """
+    now = _utc_now()
+    message = Message(
+        id=uuid.uuid4(),
+        conversation_id=conversation.id,
+        role="user",
+        content=content,
+        citations=None,
+        token_count=None,
+        created_at=now,
+    )
+    session.add(message)
+    conversation.updated_at = now
+    if new_title and conversation.title == DEFAULT_CONVERSATION_TITLE:
+        conversation.title = new_title
+    await session.commit()
+    return message
+
+
+async def add_assistant_message(
+    session: AsyncSession,
+    conversation: Conversation,
+    content: str,
+    *,
+    citations_json: str | None,
+    token_count: int | None,
+) -> Message:
+    """Store an answer (``citations_json`` is already validated) and bump ``updated_at``."""
+    now = _utc_now()
+    message = Message(
+        id=uuid.uuid4(),
+        conversation_id=conversation.id,
+        role="assistant",
+        content=content,
+        citations=citations_json,
+        token_count=token_count,
+        created_at=now,
+    )
+    session.add(message)
+    conversation.updated_at = now
+    await session.commit()
+    return message

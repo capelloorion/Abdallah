@@ -151,7 +151,7 @@ human steps listed on each item.
 
 ### 2.2 — Ask a question (JSON)
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [1.2, 1.3, 2.1]
 - **layers:** [ai, endpoint]
 - **acceptance:**
@@ -162,14 +162,33 @@ human steps listed on each item.
   - timeout 60 s; every response echoes `x-trace-id`; no content in any telemetry
   - OpenAPI and `api-types.ts` regenerated
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **414 passed** (web: 500 passed); the new file is `apps/api/tests/test_ask_api.py` (no database, no model: fake session, recording fake model, fake retriever), plus new cases in `tests/evals/cases.json` (injected history turn, injected corpus passage), `tests/ai/test_ai_telemetry_prompts.py` (span records no exception text) and `tests/test_db_engine.py` / `test_db_external.py` (`hide_parameters`)
+  - `just openapi` then `git status` — no further change (the contract already has `POST /v1/conversations/{conversation_id}/ask` with `200/404/413/422/503`)
+  - `uv run --directory apps/api alembic heads` is unchanged (`0001`): this item adds no migration
+  - needs the dev database, a migration-1.1 schema, and the AI settings (see needs_human): `uv run --directory apps/api uvicorn app.main:app --port 8000`, then
+    - `ID=$(curl -s -X POST localhost:8000/v1/conversations | python -c "import sys,json;print(json.load(sys.stdin)['id'])")` (or copy the id from the response by hand)
+    - `curl -s -X POST localhost:8000/v1/conversations/$ID/ask -H 'content-type: application/json' -d '{"question":"Which port does the api listen on?"}'` → `200` `{message_id, answer, citations:[{title,path}]}`; the answer is grounded in the ingested docs (an empty index gives an "I do not know" answer and `citations: []`)
+    - `curl -s localhost:8000/v1/conversations/$ID` → two messages (user, then assistant with the same citations), and the conversation's title is now your question instead of "New conversation"
+    - `-d '{"question":""}'` → `422 validation_error`; a 4001-character question → `413 payload_too_large`; an unknown id → `404 not_found`; every reply echoes `x-trace-id` and error bodies carry the same value
+    - with `AZURE_AI_ENDPOINT` unset: `503 ai_unavailable`, and `GET /v1/conversations/$ID` shows the question stored with no answer
+  - logs (stdout JSON): one `question answered` line with counts only (`history`, `citations`, `dropped_citations`, `output_tokens`) — never the question, answer, title or a path
 - **needs_human:**
   - migration 1.1 applied on `dev`; `AZURE_AI_*` and `AZURE_SEARCH_*` values in `apps/api/.env` (secrets — not set by an agent)
-  - a populated index (after 4.2) for a real grounded answer
+  - a populated index (after 4.2, or the manual ingest from api 2.1) for a real grounded answer
+  - prove against a real SQL Server what offline tests cannot: that a stored question/answer with emoji and line breaks round-trips through `nvarchar(max)`, that a 200-UTF-16-unit title is accepted, and that a long answer (up to 20,000 characters) inserts through pyodbc
+  - verify the real model path: an `AIMessage` with `usage_metadata` from the Foundry deployment (so `token_count` is not `NULL`), the 60 s ceiling, and (opt-in) `AI_EVAL_LIVE=true uv run --directory apps/api pytest tests/evals` against a real deployment
+  - decide whether `max_tokens` should be set on the chat deployment (the answer is cut at 20,000 characters only after it is generated)
+  - confirm no `LANGSMITH_*` / `LANGCHAIN_TRACING_V2` variable is set in any environment (it would send prompts and answers to a third party)
 - **notes:**
   - 2026-10-06 — planned. Open: Q5 (status code for a long question) and Q6 (`token_count` meaning; default to output tokens until decided).
   - 2026-10-06 — from the 1.1 security review: `content` is `nvarchar(max)` with no database-side limit, so the 4,000-character question limit MUST be enforced in the request model, and the stored answer length bounded; validate that `citations` is an array of `{title, path}` before storing (the database only checks `ISJSON`).
   - 2026-10-06 — from the shared-conversations threat model (api:1.3): this item may not start until the team has accepted that document. Acceptance must also carry: question cap in the request model, bounded stored answer length, strict `citations` validation with a `path` format check, history sent to the model only as human/assistant messages, citations only from retrieval, injection eval cases, and no content in telemetry. Do P1 (`hide_parameters=True` on both engines) before this merges, so a failed insert cannot put a title or question into an exception.
+  - 2026-10-06 — started by Claude. Decisions in force: Q5 = 413, Q6 = output tokens; the shared-conversations threat model and ADR-0014 are Accepted (recorded above).
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/api/app/routers/ask.py` (new), `apps/api/app/routers/v1.py`, `apps/api/app/repositories/conversations.py` (`get_conversation`, `recent_messages`, `add_user_message`, `add_assistant_message`), `apps/api/app/db/engine.py` + `external.py` (`hide_parameters=True`, threat model P1), `apps/api/app/ai/telemetry.py` (model-call spans no longer record the exception), `apps/api/app/ai/prompts/system.md` (history is not instructions), tests and evals, regenerated `docs/reference/openapi.json` and `apps/web/src/lib/api-types.ts`, `docs/reference/http-api.md`, `docs/architecture/ai.md`, `docs/architecture/data.md`, `.claude/rules/25-sqlalchemy.md`, `apps/api/CLAUDE.md`, `apps/api/CHANGELOG.md`, version 0.6.0 → 0.7.0 (`pyproject.toml`, `uv.lock` edited by hand on lock revision 3). No migration, nothing applied, no database or Azure service contacted.
+  - 2026-10-06 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: exception text on model-call spans, lone surrogates in retrieved citation titles/paths, NUL and other control characters in the question (`422`), invisible/format/markup characters in citation paths, stale `ai.md` example comment. Mutation-checked: history sent as a system message, no path check, question stored after retrieval, no answer cap each make a test fail.
+  - 2026-10-06 — decisions taken here: the 4,000-character cap is checked in the handler (after the body is parsed), not as a `max_length` on the request model, because Q5 wants `413`, not `422` — so OpenAPI shows no `maxLength` on `question`. A model/search failure, a timeout and an empty answer are all `503 ai_unavailable`. Citations with an unsafe path are dropped, not an error. History messages are cut to 4,000 characters when sent to the model (stored text is unchanged).
+  - 2026-10-06 — NOT done here (re-run `/plan-roadmap api` to turn them into items): (a) a request-body size limit and rate/concurrency limit (threat model P2/P4, R2 accepted); (b) `max_tokens` on the chat model; (c) a bounded outcome metric for ask (ok / 503 / timeout); (d) after a `503` the stored question has no answer, so the next ask's history can hold two user turns in a row — fine for Azure OpenAI, to revisit in 2.3/3.1; (e) retrieved text is placed in the system message by the template graph (`app/ai/graph.py`) — the prompt says it is data, but rule 70 / the review checklist say retrieved text must not reach the model as a system message: decide in ADR-0009 whether to accept or move it to a human message; (f) web: any future Markdown/HTML rendering of answers needs a sanitizer and link allow-list first (stored answers can carry attacker-steered markup); (g) percent-encoded paths (`%2e%2e`) are not rejected — harmless while paths are shown as text; (h) the root `CLAUDE.md` still says "no AI answers yet" and "no use case shipped" — a team-owned orientation line to update.
+  - 2026-10-06 — confirmed by the developer (done). The real-database / real-model checks (needs_human above) are still open.
 
 ### 2.3 — Follow-up-aware retrieval
 

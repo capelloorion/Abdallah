@@ -45,6 +45,9 @@ def get_engine() -> AsyncEngine:
             # (and its gateway) drops idle connections; a stale one would
             # otherwise surface as a request-time error.
             pool_pre_ping=True,
+            # A failed statement must not copy its bound parameters (a title, a question, an
+            # answer) into the exception text and from there into logs.
+            hide_parameters=True,
         )
         # Never log the URL (it carries credentials) — the host is enough.
         get_logger("app.db").info(

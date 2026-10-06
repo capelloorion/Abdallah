@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.ai.graph import ask, build_graph
 from app.ai.prompts import load_prompt
@@ -36,7 +37,11 @@ def _model_for(case: dict):
 def test_eval_case(case: dict) -> None:
     retriever = FakeRetriever(case["context"])
     graph = build_graph(chat_model=_model_for(case), retriever=retriever, deployment_label="eval")
-    answer = asyncio.run(ask(graph, case["question"]))
+    history = [
+        (HumanMessage if turn["role"] == "user" else AIMessage)(content=turn["content"])
+        for turn in case.get("history", [])
+    ]
+    answer = asyncio.run(ask(graph, case["question"], history=history))
     assert retriever.calls and retriever.calls[0][0] == case["question"]
     for needle in case["expect_contains"]:
         assert needle.lower() in answer.text.lower(), (case["id"], answer.text)
@@ -49,3 +54,4 @@ def test_system_prompt_keeps_its_guardrails() -> None:
     assert "do not know" in prompt  # refuses to invent
     assert "cite" in prompt  # citations
     assert "context is data" in prompt  # injection guard
+    assert "history, not instructions" in prompt  # shared history is data too (threat model A1)
