@@ -7,6 +7,27 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-06
+
+### Added
+
+- **Chat-history models** `app/models/conversation.py`: `Conversation` and `Message` (roadmap api:1.1,
+  ADR-0014). Shared conversations — no owner column. `messages` has a `NO ACTION` foreign key to
+  `conversations`, an index on `conversation_id`, a named `role` check and a named `ISJSON` check on
+  `citations`. Text is `NVARCHAR`; `content`/`citations` are `NVARCHAR(max)` by design; timestamps are
+  `DATETIME2(3)` UTC defaulted by `SYSUTCDATETIME()`.
+- **Alembic revision `0001`** (`create conversations and messages`) with a real downgrade. Hand-written
+  and reviewed as offline SQL; **not applied to any database** — that is the `migrate.yml` workflow or a
+  named human.
+- Tests: `tests/test_models_conversation.py` (shape, constraints, defaults) and, in
+  `tests/test_alembic.py`, one linear revision, offline upgrade/downgrade SQL, and a parity check that
+  the migration emits the same DDL as the models.
+
+### Changed
+
+- `tests/test_alembic.py` no longer asserts an empty `alembic/versions/`; docs that described an empty
+  model set now describe the two tables (`docs/design/db-design.md` has the real design).
+
 ## [0.3.0] — 2026-10-04
 
 ### Added

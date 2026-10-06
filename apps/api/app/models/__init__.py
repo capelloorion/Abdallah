@@ -1,7 +1,9 @@
-"""ORM models — PLACEHOLDER ONLY (the template ships no domain model; ADR-0004).
+"""ORM models (ADR-0004). Every model module is imported below so it registers on
+``Base.metadata`` — Alembic autogenerate only sees imported models.
 
-The model set is intentionally empty: the service boots, Alembic is wired, and
-``alembic/versions/`` holds no revisions. Migrations are NOT run by this project.
+Models today: ``Conversation`` and ``Message`` (``conversation.py``, roadmap api:1.1). Their
+revision lives in ``alembic/versions/``; migrations are NOT run by this project — applying one
+is the Environment-gated ``migrate.yml`` workflow or a named human.
 
 HOW TO EXTEND:
   1. Add a module here (e.g. ``app/models/widget.py``) with a 2.0-style model
@@ -39,4 +41,6 @@ Example model (uncomment and adapt)::
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from app.models.conversation import Conversation, Message
+
+__all__ = ["Conversation", "Message"]
