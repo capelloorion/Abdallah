@@ -8,6 +8,7 @@ implementation. Produced by the `threat-modeler` agent; consulted by the
 - Re-run the agent against the real code after implementation and update the file —
   threat models are living documents.
 
-| Feature                                         | Status                           | Date       |
-| ----------------------------------------------- | -------------------------------- | ---------- |
-| [Shared conversations](shared-conversations.md) | Draft (awaiting team acceptance) | 2026-10-06 |
+| Feature                                              | Status                           | Date       |
+| ---------------------------------------------------- | -------------------------------- | ---------- |
+| [Shared conversations](shared-conversations.md)      | Draft (awaiting team acceptance) | 2026-10-06 |
+| [Knowledge-base ingestion](knowledge-base-ingest.md) | Draft (awaiting team acceptance) | 2026-10-06 |

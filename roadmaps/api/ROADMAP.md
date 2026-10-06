@@ -205,18 +205,25 @@ human steps listed on each item.
 
 ### 4.1 — Threat model: knowledge-base ingestion
 
-- **status:** todo
+- **status:** done
 - **depends_on:** []
 - **layers:** [docs]
 - **acceptance:**
   - `docs/security/threat-models/knowledge-base-ingest.md` exists (via the `threat-modeler` agent) covering: an unauthenticated, cost-bearing trigger; BFF exposure (Q1); prompt injection through a corpus anyone with repo access can edit; per-replica single-flight; everything under `docs/` readable by every user
   - each threat has a mitigation or an accepted residual risk
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - open `docs/security/threat-models/knowledge-base-ingest.md` and check that it covers each of: the unauthenticated, cost-bearing trigger (section on T/E/D threats), BFF exposure (Q1, with a recommendation), prompt injection through an editable corpus, per-replica single-flight, and everything under `docs/` being readable by every user
+  - every threat row has a mitigation or an accepted residual risk (R1–R7)
+  - `pnpm exec prettier --check docs/security/threat-models` is clean; the README table lists the new document
 - **needs_human:**
-  - the team decides Q1 and accepts the residual risks; ADR-0015 moves from `Proposed` to `Accepted` or is revised
+  - the team decides **Q1** (recommended: **no**, the BFF does not mirror ingest) and **Q4** (corpus scope: explicit allow-list), accepts or rejects residual risks R1–R7, and answers the open questions Q-K1 to Q-K6 (who calls the endpoint, CODEOWNERS on corpus paths, role-holder list, the identity split for Search write access)
+  - ADR-0015 moves from `Proposed` to `Accepted`, or is revised: the threat model recommends NOT shipping it as written (an unauthenticated cost trigger and whole-`docs/` exposure are both High)
+  - the team applies the proposed edit to `docs/architecture/ARCHITECTURE.md` Part B (B3/B4a currently say the BFF mirrors every route); agents only propose that
 - **notes:**
   - 2026-10-06 — planned from the review's "threat models to write".
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — drafted by the `threat-modeler` agent: `docs/security/threat-models/knowledge-base-ingest.md` (Draft, awaiting team acceptance; gates 4.2). Findings worth knowing: the corpus loader follows symlinks and indexes absolute paths as `source`; ingestion only adds and overwrites, so a removed secret or poisoned passage stays retrievable until stale chunks are reconciled (K5); the in-memory single-flight guard holds per process, and prod runs 2–6 replicas.
+  - 2026-10-06 — confirmed by the developer (done). The team decisions and risk acceptance (needs_human above) are still open and gate 4.2.
 
 ### 4.2 — Ingest endpoint
 
@@ -236,6 +243,7 @@ human steps listed on each item.
   - run the first ingestion on `dev` and check the index
 - **notes:**
   - 2026-10-06 — planned. The single-flight guard here is in process memory, so it holds per replica only (ADR-0015); 5.1 closes that.
+  - 2026-10-06 — from the ingest threat model (api:4.1): do not start until the team accepts it. Acceptance must carry: K1 corpus allow-list plus a pre-ingest secret scan that fails the run (paths and counts only), K2 a safe loader (regular files only, no symlinks, resolved path inside the corpus root, size caps, `source` relative to the corpus root), K3 an in-memory cooldown and run budget with deadlines and the guard released in `finally`, K4 `INGEST_ENDPOINT_ENABLED` default off (`404` when off) plus a web test that no route exists under `apps/web/src/app/api/v1/admin/`, K5 reconcile stale chunks (or a recorded deferral), K11 no content in telemetry with a canary test, K12 an `ingest.run` audit event (manifest hash, commit SHA). Add a `needs_human` entry for the Search write-role grant (K8, `infra/grant-request.md`).
 
 ### 4.3 — Corpus inside the deployed api image
 
@@ -254,6 +262,8 @@ human steps listed on each item.
 
 ## Phase 5 — Hardening
 
+- 2026-10-06 — from the ingest threat model (api:4.1): the corpus is built from the K1 allow-list (deny-by-default build context, no symlinks, a CI listing and a CI secret scan); K6 provenance (CODEOWNERS and required review on corpus paths; ingest only from a corpus CI built from `main`) is a human step; record the manifest hash and commit SHA in the image and keep the corpus read-only to `appuser`; weigh CI-ingest or a Container Apps Job for prod when Q2 is answered.
+
 ### 5.1 — Ingest single-flight across replicas
 
 - **status:** todo
@@ -269,3 +279,4 @@ human steps listed on each item.
   - a lease table would need a migration reviewed and applied with `migrate.yml`
 - **notes:**
   - 2026-10-06 — planned. Must land before prod scales out: `main.prod.bicepparam` sets `apiReplicas` min 2.
+  - 2026-10-06 — from the ingest threat model (api:4.1): a persisted cooldown, a lease that stores the corpus version and refuses older runs (rolling-deploy downgrade), lease expiry, a "started without finished" alert; the endpoint stays off in any environment with more than one replica until this ships; note K7 (index swap) for rebuild windows.
