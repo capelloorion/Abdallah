@@ -209,7 +209,7 @@ human steps listed on each item.
 
 ### 3.1 — Ask a question (SSE stream)
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [2.2]
 - **layers:** [ai, endpoint]
 - **acceptance:**
@@ -219,11 +219,27 @@ human steps listed on each item.
   - the response carries the `x-trace-id` header (the error frame has no trace id; the UI reads the header)
   - the SSE frames are documented in the OpenAPI response description
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **453 passed** (web: 500 passed); the new file is `apps/api/tests/test_ask_stream_api.py` (no database, no model: fake session, a fake chat model that really streams, fake retriever; one test drives the whole ASGI app with a hand-made `receive` that disconnects after the first token)
+  - `just openapi` then `git status` — no further change (the contract has `POST /v1/conversations/{conversation_id}/ask/stream` with `200 text/event-stream` and `404/413/422/503`; the frames are in the 200 description)
+  - `pnpm -C apps/web typecheck` clean (the regenerated `api-types.ts`)
+  - needs the dev database, the migration-1.1 schema and the AI settings (see needs_human): `uv run --directory apps/api uvicorn app.main:app --port 8000`, then `ID=<id from POST /v1/conversations>` and
+    - `curl -sN -X POST localhost:8000/v1/conversations/$ID/ask/stream -H 'content-type: application/json' -d '{"question":"Which port does the api listen on?"}'` → `event: sources` with the citations, then many `event: token`, then `event: done` with the citations and token counts; `GET /v1/conversations/$ID` shows the stored question and answer (with the same citations) and the title now holds the question
+    - `Ctrl-C` curl in the middle of an answer, then `GET /v1/conversations/$ID` → the question is there, **no** assistant message for it, and the api log shows `ask stream ended by the client`
+    - an unknown id → `404`, an empty question → `422`, a 4001-character question → `413`, each as normal JSON with `{error, trace_id}` (not a stream); `AZURE_AI_ENDPOINT` unset → `503 ai_unavailable` as JSON, question stored
+    - through the web (`MOCK_UPSTREAM` off): http://localhost:3000/chat → ask → the answer streams in and a reload shows it
+  - logs: one `question streamed` line with counts only (`history`, `citations`, `dropped_citations`, `output_tokens`); failures log `outcome` and a bounded `error_kind`, never content
 - **needs_human:**
-  - the real-model run needs the same setup as 2.2
+  - the real-model run needs the same setup as 2.2 (migration 1.1 applied on `dev`, `AZURE_AI_*` / `AZURE_SEARCH_*` in `apps/api/.env`, a populated index)
+  - verify under the real server what offline tests cannot: that a browser/curl disconnect really cancels the model and search work (the unit tests close the generator and disconnect through a hand-made ASGI `receive`, not through uvicorn), that Azure Container Apps ingress and any proxy do not buffer or cut an idle stream (there is no SSE keep-alive; the first token can take several seconds), and the web disconnect check from web 1.2 ("verify the browser-disconnect abort under the real Next server")
+  - decide whether the stream needs a heartbeat/comment frame for the platform's idle timeout
 - **notes:**
   - 2026-10-06 — planned. The web BFF hop timeout must exceed the api's 60 s (web roadmap).
+  - 2026-10-06 — started by Claude.
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/api/app/routers/ask.py` (`_begin` shared with `/ask`, `_stream_frames`, `ask_question_stream`, `EventStreamResponse`), `apps/api/app/ai/streaming.py` (`stream_events()` typed events; `stream_answer()` formats them, wire format unchanged; the graph run is closed in a `finally`), tests, regenerated `docs/reference/openapi.json` and `apps/web/src/lib/api-types.ts`, `docs/reference/http-api.md`, `docs/architecture/ai.md`, `apps/api/CLAUDE.md`, `apps/api/CHANGELOG.md`, version 0.7.0 → 0.8.0 (`pyproject.toml`, `uv.lock` edited by hand on lock revision 3). No migration, nothing applied, no database or Azure service contacted. The web needs no change: its BFF route and client (web 1.2, 2.1) already parse these frames.
+  - 2026-10-06 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: a lone surrogate in a streamed token (would have cut the stream with no `error` frame), the exact-cap edge (an answer of exactly 20,000 characters lost its usage), `error_kind` clamped to the bounded set, a disconnect check right before the assistant write, the graph run closed in a `finally`, OpenAPI no longer lists an extra `application/json` body, the deadline docstring, a real ASGI-disconnect test. Mutation-checked: storing after `done`, unsanitized citations, accepting a non-`sources` first frame and no cap each make a test fail.
+  - 2026-10-06 — decisions taken here: the answer is stored by the generator just before it yields `done` (so `done` means "stored"); retrieval failure is a JSON `503` because `sources` is the first frame; a model failure after `sources` is an `error` frame; the 60 s is one wall-clock deadline for the whole stream; an answer past 20,000 characters is cut and ends with `done` but `output_tokens` is `null` (the model is stopped before it reports usage, so `token_count` is `NULL` for exactly those answers).
+  - 2026-10-06 — NOT done here (re-run `/plan-roadmap api`): (a) streams are not bounded for slow or non-reading clients (the 60 s deadline covers the waits for the model, not writes to the client) and there is no concurrency cap — threat model A7/P2, to land before wider rollout; (b) a client that leaves while the answer is being written can still get it stored (checked just before the write, not during); (c) no `truncated` marker or usage estimate for a cut answer; (d) `docs/security/threat-models/shared-conversations.md` still lists the ask endpoints as "Planned" — a team-owned status line to update; (e) the `/ask/stream` log lines carry a `trace_id` only while the request context is alive, a GC-finalised generator would log without one — the explicit close paths avoid that.
+  - 2026-10-06 — confirmed by the developer (done). The real-server checks (needs_human above) are still open.
 
 ## Phase 4 — Knowledge base (F3)
 

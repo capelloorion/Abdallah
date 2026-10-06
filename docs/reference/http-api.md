@@ -14,16 +14,17 @@ removed in [ADR-0003](../adr/0003-remove-nestjs-api-layer.md).
 
 ## Route map
 
-| Method   | Path                         | Service          | Purpose                                             | Versioned?       |
-| -------- | ---------------------------- | ---------------- | --------------------------------------------------- | ---------------- |
-| GET      | `/ping`                      | `apps/api`       | Liveness greeting                                   | No (operational) |
-| GET      | `/info`                      | `apps/api`       | Status/version/runtime report                       | No (operational) |
-| GET      | `/health`                    | `apps/api`       | Health + observability state                        | No (operational) |
-| POST/GET | `/v1/conversations[/{id}]`   | `apps/api`       | Chat history: create, list, read (see below)        | Yes (`/v1`)      |
-| POST     | `/v1/conversations/{id}/ask` | `apps/api`       | Ask a question in a conversation (JSON answer)      | Yes (`/v1`)      |
-| GET      | `/api/ping-backend`          | `apps/web` (BFF) | Proxies `apps/api` `/ping`                          | No (demo route)  |
-| GET      | `/api/info-backend`          | `apps/web` (BFF) | Proxies `apps/api` `/info`                          | No (demo route)  |
-| GET      | `/health`                    | `apps/web` (BFF) | Own health + observability state (no upstream call) | No (operational) |
+| Method   | Path                                | Service          | Purpose                                             | Versioned?       |
+| -------- | ----------------------------------- | ---------------- | --------------------------------------------------- | ---------------- |
+| GET      | `/ping`                             | `apps/api`       | Liveness greeting                                   | No (operational) |
+| GET      | `/info`                             | `apps/api`       | Status/version/runtime report                       | No (operational) |
+| GET      | `/health`                           | `apps/api`       | Health + observability state                        | No (operational) |
+| POST/GET | `/v1/conversations[/{id}]`          | `apps/api`       | Chat history: create, list, read (see below)        | Yes (`/v1`)      |
+| POST     | `/v1/conversations/{id}/ask`        | `apps/api`       | Ask a question in a conversation (JSON answer)      | Yes (`/v1`)      |
+| POST     | `/v1/conversations/{id}/ask/stream` | `apps/api`       | Ask a question, answer streamed as SSE              | Yes (`/v1`)      |
+| GET      | `/api/ping-backend`                 | `apps/web` (BFF) | Proxies `apps/api` `/ping`                          | No (demo route)  |
+| GET      | `/api/info-backend`                 | `apps/web` (BFF) | Proxies `apps/api` `/info`                          | No (demo route)  |
+| GET      | `/health`                           | `apps/web` (BFF) | Own health + observability state (no upstream call) | No (operational) |
 
 Business endpoints, when they arrive, are `/v1/<feature>` on the api (routers attached to
 `v1_router`) and `/api/v1/<feature>` on web (folder-enforced). See [Versioning](#versioning).
@@ -128,7 +129,7 @@ are user content and are never logged. Source: `apps/api/app/routers/conversatio
 
 Source: `apps/api/app/routers/ask.py`. Request `{ "question": string }`; success
 `200 { message_id, answer, citations: [{ title, path }] }`. The web BFF does not mirror this JSON route
-(the chat page uses the stream route, api 3.1).
+(the chat page uses the stream route below).
 
 | Status | Code                | When                                                                                                                                |
 | ------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -149,6 +150,28 @@ Source: `apps/api/app/routers/ask.py`. Request `{ "question": string }`; success
   `citations` come only from retrieval (unique by path, at most 20); a citation whose `path` is not a plain relative
   path (a scheme, a leading `/`, a `..` segment, a backslash, quotes or angle brackets, control, bidi or zero-width characters, over 500 characters) is dropped.
   A conversation with no sources returns `citations: []` and stores `NULL`.
+- No question, answer, title or path is ever logged.
+
+#### `POST /v1/conversations/{id}/ask/stream` — ask a question, streamed (api:3.1)
+
+Same request, validation, history, title rule, bounds and citation checks as `/ask`; only the delivery differs.
+Success is `200 text/event-stream` (`cache-control: no-cache`, `x-trace-id` header), one `event:` and one JSON
+`data:` line per frame:
+
+| Frame     | `data`                                                  | When                                                                                    |
+| --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `sources` | `{ "citations": [{ title, path }], "count": n }`        | once retrieval is done (`count` = chunks retrieved; `citations` are the validated ones) |
+| `token`   | `{ "text": "…" }`                                       | for each piece of the answer                                                            |
+| `done`    | `{ "citations": […], "input_tokens", "output_tokens" }` | the end; the answer is **already stored** when this frame is sent                       |
+| `error`   | `{ "error_kind": "timeout" \| "network" \| … }`         | a failure after the first frame; the stream ends                                        |
+
+- **Before the first frame** (`404 not_found`, `413 payload_too_large`, `422 validation_error`, and `503 ai_unavailable`
+  when retrieval fails, is not configured or takes over 60 s) the response is the normal JSON error, not a stream.
+- **After the first frame** a failure is an `error` frame with a bounded `error_kind` (no message, no trace id — the UI
+  reads the `x-trace-id` header). The question stays stored; **no assistant message** is stored, and there is no `done`.
+- A client that disconnects before `done` stores no assistant message. The whole round trip is limited to 60 s
+  (`error_kind: "timeout"` once streaming; the 60 s is wall-clock for the whole stream). An answer past 20,000 characters stops there (the stored text is the streamed text, trimmed,
+  and ends with `done` (`output_tokens` is `null`). A client that is already gone just before the write gets no stored answer.
 - No question, answer, title or path is ever logged.
 
 ---
@@ -321,6 +344,6 @@ disabled/degraded state never crashes the service — see `.claude/rules/60-obse
 - **The only exemption**: the operational endpoints `/ping`, `/info`, `/health` (both services)
   stay unversioned — container/Azure health probes target fixed paths.
 - **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2) and
-  `/v1/conversations/{id}/ask` (api:2.2); `apps/web` mirrors the conversation routes under
+  `/v1/conversations/{id}/ask` (api:2.2) and `…/ask/stream` (api:3.1); `apps/web` mirrors the conversation routes under
   `/api/v1/conversations` (web 1.1). The template's example
   `/api/v1/assistant/*` routes were removed in web 3.2.

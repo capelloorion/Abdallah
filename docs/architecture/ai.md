@@ -163,6 +163,10 @@ Attach it to `v1_router` (rule 05). The BFF calls `/v1/assistant/ask` with `fetc
 (raising the hop timeout via `signal` — a model call routinely exceeds 10 s) and
 `/v1/assistant/ask/stream` with the streaming pass-through helper.
 
+A route that must act between frames — store the answer before the `done` frame, return plain JSON for a failure
+before the first frame — consumes `stream_events()` (typed `(event, data)` pairs) and formats frames with `sse()`
+itself instead of returning `stream_answer()`; `routers/ask.py` (`/ask/stream`, api:3.1) is the worked example.
+
 ---
 
 ## Testing

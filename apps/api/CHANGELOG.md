@@ -7,6 +7,23 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-06
+
+### Added
+
+- **`POST /v1/conversations/{id}/ask/stream`** (roadmap api:3.1) — the streaming form of `/ask`: `200 text/event-stream`
+  with frames `sources` → `token`\* → `done`; `sources` and `done` carry the validated `[{title, path}]` citations
+  (`done` also `input_tokens` / `output_tokens`). The answer (content, citations, `token_count` = output tokens) is
+  stored **before** `done` is sent; a client that disconnects earlier stores no assistant message.
+  Validation, `404`, `413`, `422` and any failure before the first frame (retrieval failed or not configured, nothing
+  within 60 s) are the normal JSON errors (`503 ai_unavailable` for the last two); a failure after the first frame
+  is `event: error` `{"error_kind": …}` and the stream ends — the question is kept, no answer is stored, and there is
+  no `done`. The whole round trip is limited to 60 s; an answer past 20,000 characters stops there; the `error_kind` in an `error` frame is always one of `timeout`, `rate_limited`, `auth`, `network`, `error`; a lone surrogate in a streamed token is replaced.
+  The frames are documented in the OpenAPI response description; the contract and the web's `api-types.ts` are
+  regenerated. The web BFF route for it already exists (web 1.2).
+- `app.ai.streaming.stream_events()` — the typed `(event, data)` form of `stream_answer()`, which now formats its output.
+  `stream_answer()` and the wire format are unchanged.
+
 ## [0.7.0] — 2026-10-06
 
 ### Added

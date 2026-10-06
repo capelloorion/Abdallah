@@ -69,6 +69,9 @@ this as a starting map; read the actual files when you need detail.
   (`token_count` = output tokens). Bounds the answer (20,000 chars), keeps only safe relative citation paths, `413`
   over 4,000 characters, `503 ai_unavailable` on any model/search failure or after 60 s (question kept, no answer
   stored). The compiled graph comes from the `get_ask_graph` dependency — tests override it with fakes.
+  `POST /v1/conversations/{id}/ask/stream` (api:3.1) is the same flow as Server-Sent Events built on
+  `ai/streaming.py` `stream_events`: plain JSON errors before the first frame, an `error` frame after it, the answer
+  stored **before** `done`, nothing stored when the client leaves early.
 - `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; today `conversation.py`
   (`Conversation`, `Message` — the shared chat history, ADR-0014). Import new model modules in `models/__init__.py` so Alembic sees them.
 - `../alembic/` + `../alembic.ini` — Alembic (async `env.py`, URL from `DATABASE_URL` via

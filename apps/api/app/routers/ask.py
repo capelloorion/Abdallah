@@ -23,21 +23,24 @@ import json
 import re
 import unicodedata
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from pydantic import AfterValidator, BaseModel, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.graph import Citation as RetrievedCitation
 from app.ai.graph import ask, build_graph
+from app.ai.streaming import sse, sse_response, stream_events
 from app.ai.telemetry import error_kind
 from app.ai.tools.retrieve import clean_title, fallback_title
 from app.db import get_session
 from app.errors import AIUnavailable, ApiError, ErrorBody, NotFound
 from app.logging_config import get_logger
-from app.models.conversation import TITLE_MAX_LENGTH, Message
+from app.models.conversation import TITLE_MAX_LENGTH, Conversation, Message
 from app.repositories import conversations as repo
 from app.routers.conversations import Citation
 
@@ -186,6 +189,31 @@ async def _run_ask(graph: Any, question: str, history: list[AnyMessage]) -> Any:
         return await ask(graph, question, history=history)
 
 
+def _citations_json(citations: list[Citation]) -> str | None:
+    """The validated citations as the JSON stored in ``messages.citations``; ``NULL`` for none."""
+    if not citations:
+        return None
+    return json.dumps([c.model_dump() for c in citations], ensure_ascii=False)
+
+
+async def _begin(
+    session: AsyncSession, conversation_id: uuid.UUID, question: str
+) -> tuple[Conversation, list[AnyMessage]]:
+    """What both ask routes do before the model runs: check the question's length, find the
+    conversation, read the history, then **store the question**.
+    """
+    if len(question) > MAX_QUESTION_CHARS:
+        raise ApiError("payload_too_large", status_code=413)
+    conversation = await repo.get_conversation(session, conversation_id)
+    if conversation is None:
+        raise NotFound()
+    history = _history(await repo.recent_messages(session, conversation_id))
+    await repo.add_user_message(
+        session, conversation, question, new_title=title_from_question(question)
+    )
+    return conversation, history
+
+
 @router.post(
     "/{conversation_id}/ask",
     response_model=AskResponse,
@@ -213,16 +241,7 @@ async def ask_question(
 
     A conversation still called "New conversation" is titled with its first question.
     """
-    if len(body.question) > MAX_QUESTION_CHARS:
-        raise ApiError("payload_too_large", status_code=413)
-    conversation = await repo.get_conversation(session, conversation_id)
-    if conversation is None:
-        raise NotFound()
-
-    history = _history(await repo.recent_messages(session, conversation_id))
-    await repo.add_user_message(
-        session, conversation, body.question, new_title=title_from_question(body.question)
-    )
+    conversation, history = await _begin(session, conversation_id, body.question)
 
     try:
         answer = await _run_ask(graph, body.question, history)
@@ -239,11 +258,7 @@ async def ask_question(
         session,
         conversation,
         text,
-        citations_json=(
-            json.dumps([c.model_dump() for c in citations], ensure_ascii=False)
-            if citations
-            else None
-        ),
+        citations_json=_citations_json(citations),
         token_count=answer.output_tokens,
     )
     _log.info(
@@ -254,3 +269,215 @@ async def ask_question(
         output_tokens=answer.output_tokens,
     )
     return AskResponse(message_id=stored.id, answer=text, citations=citations)
+
+
+# ---- the streaming variant (roadmap api:3.1) --------------------------------------------------
+
+_STREAM_DOC = (
+    "Server-Sent Events, one `event:` and one JSON `data:` line per frame: "
+    '`sources` `{"citations": [{"title", "path"}], "count"}` once retrieval is done, then '
+    '`token` `{"text"}` for each piece of the answer, then `done` `{"citations", "input_tokens", '
+    '"output_tokens"}`. The answer is stored before `done` is sent. A failure after the first '
+    'frame is `error` `{"error_kind"}` and the stream ends (the question is kept, no answer is '
+    "stored); a failure before the first frame is the normal JSON error (`503 ai_unavailable`). "
+    "The `x-trace-id` header is on the response; the `error` frame carries no trace id."
+)
+
+Events = AsyncIterator[tuple[str, dict[str, Any]]]
+
+# What ``app.ai.telemetry.error_kind`` can return; anything else is shown as plain "error".
+_ERROR_KINDS = frozenset({"timeout", "rate_limited", "auth", "network", "error"})
+
+
+def _bounded_kind(value: object) -> str:
+    """An ``error_kind`` that is safe to put in a frame or a log line (never free text)."""
+    return value if isinstance(value, str) and value in _ERROR_KINDS else "error"
+
+
+class EventStreamResponse(StreamingResponse):
+    """Only so OpenAPI says ``text/event-stream`` instead of an extra ``application/json``."""
+
+    media_type = "text/event-stream"
+
+
+async def _next_event(events: Events, deadline: float) -> Any:
+    """The next ``(event, data)`` pair; ``StopAsyncIteration`` at the end, ``TimeoutError`` once
+    the whole round trip has taken ``ASK_TIMEOUT_SECONDS``. The deadline is wall-clock for the whole
+    stream: it bounds the waits for the model and search (not the writes to the client), but time
+    spent suspended at a ``yield`` counts against it.
+    """
+    async with asyncio.timeout_at(deadline):
+        return await anext(events)
+
+
+async def _close(events: Events) -> None:
+    aclose = getattr(events, "aclose", None)
+    if aclose is not None:
+        try:
+            await aclose()
+        except Exception as exc:  # noqa: BLE001 — cleanup must not mask the real outcome
+            _log.debug("ask stream cleanup failed", kind=type(exc).__name__)
+
+
+async def _stream_frames(
+    session: AsyncSession,
+    conversation: Conversation,
+    events: Events,
+    deadline: float,
+    *,
+    retrieved: int,
+    raw_citations: int,
+    citations: list[Citation],
+    history_size: int,
+    is_disconnected: Callable[[], Awaitable[bool]],
+) -> AsyncIterator[str]:
+    """``sources`` → ``token``* → ``done`` — the answer is stored before ``done`` is yielded, so a
+    client that leaves earlier (or a failure) stores no assistant message. One window stays: a
+    client that leaves while the answer is being written may still get it stored (it is checked
+    just before the write, not during it).
+    """
+    shown = [c.model_dump() for c in citations]
+    parts: list[str] = []
+    size = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    try:
+        yield sse("sources", {"citations": shown, "count": retrieved})
+        while True:
+            try:
+                event, data = await _next_event(events, deadline)
+            except StopAsyncIteration:
+                _log.warning("ask stream failed", outcome="no_terminal_frame")
+                yield sse("error", {"error_kind": "error"})
+                return
+            except Exception as exc:  # noqa: BLE001 — the frame carries a bounded kind only
+                kind = error_kind(exc)
+                _log.warning("ask stream failed", outcome="error", error_kind=kind)
+                yield sse("error", {"error_kind": kind})
+                return
+            if event == "token":
+                # Valid UTF-8 (a lone surrogate would break the encoder mid-stream), then the cap.
+                text = str(data.get("text", "")).encode("utf-8", "replace").decode("utf-8")
+                room = MAX_ANSWER_CHARS - size
+                capped = len(text) > room
+                text = text[:room]
+                size += len(text)
+                parts.append(text)
+                if text:
+                    yield sse("token", {"text": text})
+                if capped:  # past the cap: stop here, so the stored text is what was streamed
+                    break
+            elif event == "done":
+                input_tokens, output_tokens = data.get("input_tokens"), data.get("output_tokens")
+                break
+            elif event == "error":
+                kind = _bounded_kind(data.get("error_kind"))
+                _log.warning("ask stream failed", outcome="error", error_kind=kind)
+                yield sse("error", {"error_kind": kind})
+                return
+
+        text = _storable("".join(parts))
+        if not text:
+            _log.warning("ask stream failed", outcome="empty_answer")
+            yield sse("error", {"error_kind": "error"})
+            return
+        if await is_disconnected():  # the client is gone: do not store an answer it never got
+            _log.info("ask stream ended by the client", outcome="client_disconnected")
+            return
+        try:
+            await repo.add_assistant_message(
+                session,
+                conversation,
+                text,
+                citations_json=_citations_json(citations),
+                token_count=output_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 — a failed write is a failed answer, never `done`
+            _log.error("ask stream failed", outcome="store_failed", kind=type(exc).__name__)
+            yield sse("error", {"error_kind": "error"})
+            return
+        _log.info(
+            "question streamed",
+            history=history_size,
+            citations=len(citations),
+            dropped_citations=raw_citations - len(citations),
+            output_tokens=output_tokens,
+        )
+        yield sse(
+            "done",
+            {"citations": shown, "input_tokens": input_tokens, "output_tokens": output_tokens},
+        )
+    except asyncio.CancelledError, GeneratorExit:
+        _log.info("ask stream ended by the client", outcome="client_disconnected")
+        raise
+    finally:
+        await _close(events)
+
+
+@router.post(
+    "/{conversation_id}/ask/stream",
+    response_model=None,
+    response_class=EventStreamResponse,
+    responses={
+        200: {
+            "description": _STREAM_DOC,
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+        404: {"model": ErrorBody, "description": "Unknown conversation (`not_found`)"},
+        413: {
+            "model": ErrorBody,
+            "description": f"Question over {MAX_QUESTION_CHARS} characters (`payload_too_large`)",
+        },
+        503: {
+            "model": ErrorBody,
+            "description": "The model or search failed, or took over 60 s, before the first "
+            "frame (`ai_unavailable`). The question is kept; no answer is stored.",
+        },
+    },
+)
+async def ask_question_stream(
+    session: DbSession,
+    graph: AskGraph,
+    conversation_id: uuid.UUID,
+    body: AskRequest,
+    request: Request,
+) -> StreamingResponse:
+    """Like `/ask`, but streams the answer as Server-Sent Events. Same validation, history,
+    title rule, bounds and citation checks; the difference is how the answer is delivered.
+    """
+    conversation, history = await _begin(session, conversation_id, body.question)
+
+    events = stream_events(graph, body.question, history=history)
+    deadline = asyncio.get_running_loop().time() + ASK_TIMEOUT_SECONDS
+    try:
+        event, data = await _next_event(events, deadline)
+    except asyncio.CancelledError:
+        await _close(events)
+        raise
+    except Exception as exc:  # noqa: BLE001 — before the first frame this is a plain JSON 503
+        await _close(events)
+        _log.warning("ask stream failed", outcome="error", error_kind=error_kind(exc))
+        raise AIUnavailable() from None
+    if event != "sources":  # an `error` frame (retrieval failed) or anything unexpected
+        await _close(events)
+        _log.warning(
+            "ask stream failed",
+            outcome="error",
+            error_kind=_bounded_kind(data.get("error_kind")) if event == "error" else "protocol",
+        )
+        raise AIUnavailable()
+
+    retrieved_citations = data.get("citations", [])
+    return sse_response(
+        _stream_frames(
+            session,
+            conversation,
+            events,
+            deadline,
+            retrieved=int(data.get("count", 0)),
+            raw_citations=len(retrieved_citations),
+            citations=sanitize_citations(retrieved_citations),
+            history_size=len(history),
+            is_disconnected=request.is_disconnected,
+        )
+    )

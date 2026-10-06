@@ -137,6 +137,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/v1/conversations/{conversation_id}/ask/stream': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ask Question Stream
+     * @description Like `/ask`, but streams the answer as Server-Sent Events. Same validation, history,
+     *     title rule, bounds and citation checks; the difference is how the answer is delivered.
+     */
+    post: operations['ask_question_stream_v1_conversations__conversation_id__ask_stream_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -547,6 +568,77 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+    };
+  };
+  ask_question_stream_v1_conversations__conversation_id__ask_stream_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AskRequest'];
+      };
+    };
+    responses: {
+      /** @description Server-Sent Events, one `event:` and one JSON `data:` line per frame: `sources` `{"citations": [{"title", "path"}], "count"}` once retrieval is done, then `token` `{"text"}` for each piece of the answer, then `done` `{"citations", "input_tokens", "output_tokens"}`. The answer is stored before `done` is sent. A failure after the first frame is `error` `{"error_kind"}` and the stream ends (the question is kept, no answer is stored); a failure before the first frame is the normal JSON error (`503 ai_unavailable`). The `x-trace-id` header is on the response; the `error` frame carries no trace id. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': string;
+        };
+      };
+      /** @description Unknown conversation (`not_found`) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Question over 4000 characters (`payload_too_large`) */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Validation failed (`validation_error`) */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Unhandled error (`internal_error`) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description The model or search failed, or took over 60 s, before the first frame (`ai_unavailable`). The question is kept; no answer is stored. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
         };
       };
     };
