@@ -9,6 +9,8 @@
 | Decisions  | [ADR-0015](../../adr/0015-ingest-trigger-endpoint.md) (Proposed), [ADR-0013](../../adr/0013-corpus-delivery.md) (Proposed)                                                          |
 | Code basis | `apps/api/app/ai/ingest.py`, `apps/api/app/ai/tools/retrieve.py`, `apps/api/app/ai/graph.py`, `apps/api/app/ai/prompts/system.md` (CLI job only; **no ingest endpoint exists yet**) |
 
+> **Decisions recorded 2026-10-06 (Abdallah Ahmed, developer):** Q1 — the web BFF does **not** mirror ingest (server/CLI only; endpoint off by default, plus a web test that no admin route exists). Q4 — the corpus is an explicit allow-list of `docs/**/*.md` (default deny; `docs/security/` and design drafts excluded unless opted in; secret scan before every ingest). **Not yet accepted:** residual risks R1–R7 and ADR-0015 — to be confirmed before api 4.2 ships to anyone.
+
 ## 1. Feature summary
 
 Ingestion turns a corpus of `.md`/`.txt` files (planned: the repo's `docs/`, ADR-0013) into chunks,

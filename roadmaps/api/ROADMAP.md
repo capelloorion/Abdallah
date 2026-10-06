@@ -18,14 +18,21 @@ human steps listed on each item.
 
 ## Open decisions (from the architecture review — they gate the items marked `blocked`)
 
-| #   | Decision                                                                                           | Gates          |
-| --- | -------------------------------------------------------------------------------------------------- | -------------- |
-| Q1  | Is `POST /v1/admin/ingest` mirrored by the web BFF, or CLI/server-only?                            | 4.1, 4.2, web  |
-| Q2  | Corpus delivery: different build context, pre-build copy of `docs/` into `apps/api`, or CI ingest? | 4.3 (ADR-0013) |
-| Q3  | Follow-up retrieval: last question only, previous turn + question, or a condense step?             | 2.3            |
-| Q4  | Corpus scope: only `docs/**/*.md`, or also `README.md` / `.claude/rules/`? Any off-limits files?   | 4.2            |
-| Q5  | Over-long question: `413 payload_too_large` (draft B4a) or `422 validation_error` (template)?      | 2.2, 3.1       |
-| Q6  | `messages.token_count`: input tokens, output tokens, or the sum?                                   | 2.2, 3.1       |
+| #   | Decision                                                                                                                                   | Gates          |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| Q1  | Is `POST /v1/admin/ingest` mirrored by the web BFF, or CLI/server-only? **Decided: server/CLI-only**                                       | 4.1, 4.2, web  |
+| Q2  | Corpus delivery: different build context, pre-build copy of `docs/` into `apps/api`, or CI ingest? **Decided: pre-build copy**             | 4.3 (ADR-0013) |
+| Q3  | Follow-up retrieval: last question only, previous turn + question, or a condense step? **Decided: previous turn + question**               | 2.3            |
+| Q4  | Corpus scope: only `docs/**/*.md`, or also `README.md` / `.claude/rules/`? Any off-limits files? **Decided: `docs/**/\*.md` allow-list\*\* | 4.2            |
+| Q5  | Over-long question: `413 payload_too_large` (draft B4a) or `422 validation_error` (template)? **Decided: 413**                             | 2.2, 3.1       |
+| Q6  | `messages.token_count`: input tokens, output tokens, or the sum? **Decided: output tokens**                                                | 2.2, 3.1       |
+
+**Decisions recorded 2026-10-06 by Abdallah Ahmed (developer):**
+
+- **Q1** — the web BFF does not mirror ingest; it is server/CLI-only (endpoint off by default; a web test asserts there is no route under `apps/web/src/app/api/v1/admin/`).
+- **Q4** — corpus = an explicit allow-list of `docs/**/*.md`, default deny; `docs/security/` and design drafts excluded unless opted in.
+- **Q3** — a follow-up retrieves on the previous user turn plus the new question (no extra model call). **Q5** — a question over 4,000 characters is `413 payload_too_large`. **Q6** — `messages.token_count` is the output (completion) tokens. **Q2** — the corpus is copied from `docs/` into `apps/api` at build time. These four are the recommended defaults, accepted in bulk; each can be changed later.
+- **Accepted:** the shared-conversations threat model (R1–R6) and the notice wording shipped in web 4.1; ADR-0014 is `Accepted`. **Not yet accepted:** the ingest residual risks R1–R7 and ADR-0015 (to confirm before 4.2 ships).
 
 ## Phase 1 — Conversations (F2)
 

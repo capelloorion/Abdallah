@@ -1,13 +1,13 @@
 # Threat model — Shared conversations
 
-|            |                                                                                                                           |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Author     | `threat-modeler` agent (Claude), for the Team Assistant team                                                              |
-| Date       | 2026-10-06                                                                                                                |
-| Status     | **Draft (awaiting team acceptance)** — gates roadmap item `api:2.2`, the first item that stores content                   |
-| Roadmap    | `api:1.3` (`roadmaps/api/ROADMAP.md`)                                                                                     |
-| Decision   | [ADR-0014](../../adr/0014-shared-conversations-until-auth.md) (Proposed)                                                  |
-| Code basis | `apps/api` at api:1.2 (`app/routers/conversations.py`, `app/repositories/conversations.py`, `app/models/conversation.py`) |
+|            |                                                                                                                                                                |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Author     | `threat-modeler` agent (Claude), for the Team Assistant team                                                                                                   |
+| Date       | 2026-10-06                                                                                                                                                     |
+| Status     | **R1–R6 and the notice wording accepted by Abdallah Ahmed (developer) on 2026-10-06**; the pre-launch checklist in section 11 still gates any release to users |
+| Roadmap    | `api:1.3` (`roadmaps/api/ROADMAP.md`)                                                                                                                          |
+| Decision   | [ADR-0014](../../adr/0014-shared-conversations-until-auth.md) (Proposed)                                                                                       |
+| Code basis | `apps/api` at api:1.2 (`app/routers/conversations.py`, `app/repositories/conversations.py`, `app/models/conversation.py`)                                      |
 
 ## 1. Feature summary
 
