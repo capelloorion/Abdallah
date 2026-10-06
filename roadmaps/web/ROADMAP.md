@@ -140,7 +140,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 2.3 — `/chat` page: list, create and reopen conversations
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [1.1, 2.1, 2.2]
 - **layers:** [ui]
 - **acceptance:**
@@ -150,12 +150,22 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - a list or load failure shows the error code and `trace_id` instead of a blank page; the page works end to end against `MOCK_UPSTREAM=true` fixtures
   - the page uses `ChatPanel`/`ChatThread` refactored to take a conversation id and initial messages (the page itself stays under the manual Playwright smoke)
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **all pass** (the new tests: `src/lib/conversations-client.test.ts`, `src/components/chat/ChatWorkspace.test.tsx`, plus additions to `ChatPanel.test.tsx` and `MessageInput.test.tsx`)
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` lists `○ /chat`
+  - by hand, mock mode (`MOCK_UPSTREAM=true` in `apps/web/.env.local`, `pnpm -C apps/web dev`, open http://localhost:3000/chat):
+    - the left list shows three chats ("How does trace_id propagation work?", "What does the error contract look like?", "New conversation") with relative times; nothing is selected and the right side says "Pick a chat, or start a new one."
+    - click the first chat → its two messages appear with a **Sources** block under the answer, and the input has focus; ask anything → a streamed answer is added below (mock answer)
+    - click **+ New chat** → a "New conversation" row appears at the top, selected, with an empty thread and the cursor in the input (the mock list does not grow on reload — it is stateless)
+    - to see the failure line, turn `MOCK_UPSTREAM` off with no api running and reload → "Could not load your chats (upstream_unreachable). Trace id: …" while **+ New chat** stays visible
+    - the question box posts to `/api/v1/conversations/<id>/ask/stream` (browser dev tools → Network)
 - **needs_human:**
-  - run the manual Playwright smoke for `/chat` once (page tests are manual per rule 40)
+  - run the manual Playwright smoke for `/chat` once (page tests are manual per rule 40) and look at it in a browser; the phone-width layout is web 2.5 (below 768 px the two columns stack for now)
 - **notes:**
   - 2026-10-06 — planned.
   - 2026-10-06 — from web 2.1: history must go through `parseCitations` and be rendered as text only; never show a stored message's content as an error line; see the web 2.1 notes.
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test. Reviews run: `code-reviewer` and `security-reviewer` (no blockers; their findings were fixed: newest-200 truncation, wider invisible-character set, `askEndpoint` guard, focus kept, failed list not shown as empty, a real in-flight race test). Files: `apps/web/src/components/chat/ChatWorkspace.tsx` + test, `apps/web/src/lib/conversations-client.ts` + test, `ChatPanel.tsx` (`initialMessages`, `autoFocus`, `headingLevel`, live ids `live-<n>`), `MessageInput.tsx` (`autoFocus`), `chat-client.ts` (exported helpers), `src/app/chat/page.tsx`, docs, version 0.5.0 → 0.6.0. The ask box already posts to the conversation's ask-stream route, but the counter, the move-to-top and the title update are web 2.4. Mock mode is stateless: a created chat is added to the page's own list only.
+  - 2026-10-06 — confirmed by the developer (done). The manual Playwright smoke and a look in the browser (needs_human above) are still theirs to do.
 
 ### 2.4 — Send a question in a conversation
 

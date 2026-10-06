@@ -27,7 +27,7 @@ URL.
 - `src/app/health/route.ts` — `/health`.
 - `src/app/api/v1/assistant/ask/route.ts` + `ask/stream/route.ts` — **example business routes**
   (JSON + SSE) that proxy `${API_BASE_URL}/v1/assistant/…` or, with `MOCK_UPSTREAM=true`, serve
-  `src/mocks/assistant.ts`. `src/app/chat/page.tsx` — the example chat page on them.
+  `src/mocks/assistant.ts` (kept until web 3.2).
 - `src/app/api/v1/conversations/route.ts` (`GET` list, `POST` create) + `[id]/route.ts` (`GET` one) —
   the **conversation BFF routes** (web 1.1). They validate what they forward (`limit` 1–100, a UUID
   `id`, a size-capped body reduced to a trimmed `title`), pass the api's status and error body
@@ -48,6 +48,7 @@ URL.
   trace id on failure — a failed answer with nothing to show is just that line, and a cut-off answer keeps its
   text and is marked incomplete. **Titles, paths and codes are document/server content: render them as text only —
   never `dangerouslySetInnerHTML`, never a link target** (threat model `shared-conversations` T5).
+- `src/app/chat/page.tsx` — the chat page: just `<ChatWorkspace />` (pages stay thin and under the manual Playwright smoke). `src/components/chat/ChatWorkspace.tsx` — the list + selected conversation: loads the list, **+ New chat**, reopen (stale loads aborted, errors shown as code + trace id), mounts `ChatPanel` (keyed by conversation id, `initialMessages`, `autoFocus`) on `/api/v1/conversations/{id}/ask/stream`. `src/lib/conversations-client.ts` — browser client of the conversation BFF routes; **stored data is untrusted text** (shape-checked, bidi/control stripped, bounded, UUID ids, `parseCitations`, stored ids are `stored-<n>` and never carry an error).
 - `src/components/chat/ConversationList.tsx` — the conversation sidebar (web 2.2): presentational, rows are buttons with `aria-current` on the selected one, "No chats yet", **+ New chat**; titles are stored data, rendered as text only. `src/lib/relative-time.ts` formats its times.
 - `src/lib/stream.ts` (`streamUpstream`/`proxyStream`), `src/lib/sse.ts` (frame parser/builder),
   `src/lib/chat-client.ts` (`askStream`, browser → BFF: hands over `citations`, reports every failure once as

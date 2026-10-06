@@ -10,6 +10,12 @@ interface Props {
   /** Same-origin SSE route, e.g. `/api/v1/assistant/ask/stream` (the BFF rule: never the api). */
   endpoint: string;
   title?: string;
+  /** Messages already stored for this conversation (already parsed and sanitized). */
+  initialMessages?: ChatMessage[];
+  /** Focus the input on mount. */
+  autoFocus?: boolean;
+  /** The heading level of the title; the page owns the h1 when it embeds the panel. */
+  headingLevel?: 1 | 2;
 }
 
 /**
@@ -19,11 +25,19 @@ interface Props {
 export const MAX_ANSWER_CHARS = 100_000;
 
 let counter = 0;
-const nextId = () => `m${++counter}`;
+/** Live ids start with `live-`; stored ids are `stored-<n>` (conversations-client), so they never collide. */
+const nextId = () => `live-${++counter}`;
 
 /** A complete streaming chat surface: thread + input, wired to a BFF SSE route. */
-export function ChatPanel({ endpoint, title = 'Assistant' }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function ChatPanel({
+  endpoint,
+  title = 'Assistant',
+  initialMessages,
+  autoFocus = false,
+  headingLevel = 1,
+}: Props) {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
+  const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -94,11 +108,11 @@ export function ChatPanel({ endpoint, title = 'Assistant' }: Props) {
 
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-col gap-4" aria-label={title}>
-      <h1 className="text-xl font-semibold">{title}</h1>
+      <Heading className="text-xl font-semibold">{title}</Heading>
       <div className="min-h-[16rem] rounded-2xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
         <ChatThread messages={messages} />
       </div>
-      <MessageInput onSubmit={send} disabled={busy} />
+      <MessageInput onSubmit={send} disabled={busy} autoFocus={autoFocus} />
     </section>
   );
 }

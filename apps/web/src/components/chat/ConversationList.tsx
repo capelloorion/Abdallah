@@ -11,6 +11,8 @@ interface Props {
   onNewChat: () => void;
   /** Disables the buttons while a request is in flight (the caller owns that state). */
   disabled?: boolean;
+  /** The list could not be loaded: say nothing about "no chats" (that would be untrue). */
+  unavailable?: boolean;
   /** Fixes "now" for the relative times; tests only. */
   now?: Date;
 }
@@ -34,6 +36,7 @@ export function ConversationList({
   onSelect,
   onNewChat,
   disabled = false,
+  unavailable = false,
   now,
 }: Readonly<Props>) {
   return (
@@ -47,9 +50,11 @@ export function ConversationList({
         + New chat
       </button>
       {items.length === 0 ? (
-        <p className="text-sm text-neutral-500" data-testid="conversations-empty">
-          No chats yet
-        </p>
+        unavailable ? null : (
+          <p className="text-sm text-neutral-500" data-testid="conversations-empty">
+            No chats yet
+          </p>
+        )
       ) : (
         <ul className="flex flex-col gap-1">
           {items.map((c) => {

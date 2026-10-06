@@ -45,9 +45,29 @@ const MAX_CITATIONS = 50;
 const MAX_FIELD_CHARS = 500;
 const MAX_ERROR_BODY_BYTES = 4096;
 const MAX_ERROR_EVENTS = 20;
-// Control, zero-width and bidi-override/isolate characters: invisible in a title or path, but they
-// can reorder or disguise the text next to them. Stripped from everything we show as a source.
-const INVISIBLE = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+/**
+ * Characters that draw nothing or reorder text: C0/C1 controls, soft hyphen, Arabic letter mark,
+ * Mongolian vowel separator, zero-width and bidi marks/overrides/isolates, line/paragraph
+ * separators, word joiner, BOM, interlinear annotation marks and the invisible tag characters.
+ * Built from code points so the source stays readable.
+ */
+const INVISIBLE_RANGES: [number, number][] = [
+  [0x0000, 0x001f],
+  [0x007f, 0x009f],
+  [0x00ad, 0x00ad],
+  [0x061c, 0x061c],
+  [0x180e, 0x180e],
+  [0x200b, 0x200f],
+  [0x2028, 0x202e],
+  [0x2060, 0x2069],
+  [0xfeff, 0xfeff],
+  [0xfff9, 0xfffb],
+  [0xe0000, 0xe007f],
+];
+const INVISIBLE = new RegExp(
+  `[${INVISIBLE_RANGES.map(([a, b]) => String.fromCodePoint(a) + '-' + String.fromCodePoint(b)).join('')}]`,
+  'gu',
+);
 // A same-origin path only: one leading slash (not `//host`), no scheme, no whitespace.
 const SAME_ORIGIN_PATH = /^\/(?!\/)\S*$/;
 
@@ -65,6 +85,15 @@ function clean(text: string): string {
 
 function clip(text: string): string {
   return text.length > MAX_FIELD_CHARS ? text.slice(0, MAX_FIELD_CHARS) : text;
+}
+
+/**
+ * Stored or server text made safe to render: control, zero-width and bidi-override characters
+ * stripped, then cut to `max` characters. Still TEXT — never HTML.
+ */
+export function sanitizeText(text: string, max: number = MAX_FIELD_CHARS): string {
+  const safe = clean(text);
+  return safe.length > max ? safe.slice(0, max) : safe;
 }
 
 function fileName(path: string): string {
@@ -93,7 +122,7 @@ export function parseCitations(value: unknown): Citation[] {
 }
 
 /** Read at most `maxBytes` of a body as text; `null` when it is longer (the rest is dropped). */
-async function readBoundedText(
+export async function readBoundedText(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
 ): Promise<string | null> {
@@ -120,7 +149,7 @@ async function readBoundedText(
  * trace id comes from the body, else the `x-trace-id` header. Anything unreadable falls back to
  * a code by status class — callers should key on the class, not the exact code.
  */
-async function readFailure(res: Response): Promise<StreamError> {
+export async function readFailure(res: Response): Promise<StreamError> {
   const headerTrace = validTrace(res.headers.get('x-trace-id'));
   const byClass = res.status >= 500 ? 'upstream_error' : 'request_rejected';
   const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();

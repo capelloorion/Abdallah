@@ -255,4 +255,32 @@ describe('<ChatPanel /> limits and cancellation', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('bad_endpoint');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it('starts from the stored messages and keeps them when a new answer arrives', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      stream([sseFrame('token', { text: 'Fresh' }), sseFrame('done', { citations: [] })]),
+    );
+    const user = userEvent.setup();
+    render(
+      <ChatPanel
+        endpoint={ENDPOINT}
+        initialMessages={[
+          { id: 's1', role: 'user', text: 'old question' },
+          { id: 's2', role: 'assistant', text: 'old answer', citations: [API] },
+        ]}
+      />,
+    );
+    expect(screen.getByText('old answer')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sources')).toHaveTextContent('docs/api.md');
+    await user.type(screen.getByLabelText('Message'), 'next{Enter}');
+    await waitFor(() => expect(screen.getByText('Fresh')).toBeInTheDocument());
+    expect(screen.getByText('old question')).toBeInTheDocument();
+  });
+
+  it('uses the heading level it is given and focuses the input on request', () => {
+    render(<ChatPanel endpoint={ENDPOINT} headingLevel={2} autoFocus />);
+    expect(screen.getByRole('heading', { level: 2, name: 'Assistant' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Message')).toHaveFocus();
+  });
 });

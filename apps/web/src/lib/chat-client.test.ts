@@ -312,6 +312,16 @@ describe('parseCitations — invisible characters', () => {
     ).toEqual([{ title: 'Readme', path: 'docs/evil.md' }]);
   });
 
+  it.each([0x00ad, 0x061c, 0x180e, 0x2028, 0x2029, 0xfff9, 0xe0041])(
+    'strips the invisible character U+%s',
+    (code) => {
+      const c = String.fromCodePoint(code);
+      expect(parseCitations([{ title: `a${c}b`, path: `d${c}.md` }])).toEqual([
+        { title: 'ab', path: 'd.md' },
+      ]);
+    },
+  );
+
   it('falls back to the file name when a title is nothing but invisible characters', () => {
     expect(parseCitations([{ title: `${RLO}${ZWSP}`, path: 'docs/a/setup.md' }])).toEqual([
       { title: 'setup.md', path: 'docs/a/setup.md' },

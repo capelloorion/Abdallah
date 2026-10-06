@@ -7,6 +7,30 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-06
+
+### Added
+
+- The **`/chat` page** now shows the conversation list (left) and the selected conversation (right). On load it calls `GET /api/v1/conversations`; **+ New chat** calls `POST /api/v1/conversations`, puts the new chat first, selects it and focuses the input; clicking a row calls `GET /api/v1/conversations/{id}` and shows its stored messages with their sources, and the input continues that conversation (it posts to `/api/v1/conversations/{id}/ask/stream`). A failed list, create or open shows the error code and trace id instead of a blank page. It works end to end with `MOCK_UPSTREAM=true`.
+- `ChatWorkspace` (`src/components/chat/ChatWorkspace.tsx`) owns the list, the selection and the load states; the page itself stays thin.
+- `src/lib/conversations-client.ts`: the browser client of the conversation BFF routes (`listConversations`, `createConversation`, `getConversation`, `askEndpoint`). Stored data is untrusted text: rows and messages are shape-checked, control/bidi characters stripped, sizes bounded (100 rows, 200 messages, 100,000 characters each, 2 MB per response), ids checked as UUIDs before they enter a URL, and citations go through `parseCitations`. A stored message never carries an `error` or trace id, so it can never look like a failed request.
+- `ChatPanel` takes `initialMessages`, `autoFocus` and `headingLevel`; `MessageInput` takes `autoFocus`.
+
+### Hardening from review
+
+- A thread with more than 200 messages keeps the NEWEST 200 and shows "Only the most recent messages are shown." (the first version kept the oldest). `askEndpoint` throws for anything that is not a UUID, so a path is never built from other text. The set of characters stripped from stored text now also covers the soft hyphen, the Arabic letter mark (U+061C), line/paragraph separators, interlinear marks and the invisible tag characters. Titles are trimmed.
+- Nothing is disabled while a chat opens or is created, so keyboard focus stays on the button just pressed; the newest action wins (an older open is cancelled, a new chat that finishes after another was opened joins the list without taking over). A failed list says so instead of "No chats yet" and offers **Try again**. The open conversation's title is the panel heading. Loading and hint lines are live regions.
+
+### Changed
+
+- `/chat` no longer shows the template's example assistant; it uses the conversation routes. (The example route and mock stay until web 3.2.)
+- Live message ids are `live-<n>` and stored ones `stored-<n>`, so a stored message can never be mistaken for the answer being streamed (found while testing: a stored id `m1` collided with the first live id and a streamed token landed on a stored message).
+- `chat-client.ts` exports `sanitizeText`, `readBoundedText` and `readFailure` for the new client.
+
+### Tests
+
+- `conversations-client.test.ts`, `ChatWorkspace.test.tsx` and additions to `ChatPanel.test.tsx` / `MessageInput.test.tsx`: list, empty and failed list, open with sources, truncated note, failed open and retry, stored text never shown as an error, new chat (also from the empty state, and failing), hostile title inert, requests cancelled on leave. Each guard was proven by removing it and watching a test fail.
+
 ## [0.5.0] — 2026-10-06
 
 ### Added

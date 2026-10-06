@@ -25,6 +25,14 @@ describe('<MessageInput />', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it('focuses the box on mount only when asked to', () => {
+    const { unmount } = render(<MessageInput onSubmit={vi.fn()} autoFocus />);
+    expect(screen.getByLabelText('Message')).toHaveFocus();
+    unmount();
+    render(<MessageInput onSubmit={vi.fn()} />);
+    expect(screen.getByLabelText('Message')).not.toHaveFocus();
+  });
+
   it('is inert while disabled', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();

@@ -6,6 +6,8 @@ interface Props {
   onSubmit: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  /** Focus the textarea when it mounts (a new or reopened conversation). */
+  autoFocus?: boolean;
 }
 
 /** Textarea + send button. Enter sends, Shift+Enter inserts a newline. */
@@ -13,6 +15,7 @@ export function MessageInput({
   onSubmit,
   disabled = false,
   placeholder = 'Ask a question…',
+  autoFocus = false,
 }: Props) {
   const [text, setText] = useState('');
   const canSend = !disabled && text.trim().length > 0;
@@ -38,6 +41,7 @@ export function MessageInput({
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
         disabled={disabled}
+        autoFocus={autoFocus}
         rows={2}
         placeholder={placeholder}
         aria-label="Message"
