@@ -12,6 +12,7 @@ import {
   type ConversationThread,
 } from '@/lib/conversations-client';
 import { ChatPanel } from './ChatPanel';
+import { ConversationDrawer } from './ConversationDrawer';
 import { ConversationList } from './ConversationList';
 
 /** The red line for a failed list/create/load: the error code and the trace id, as text. */
@@ -66,6 +67,10 @@ export function ChatWorkspace() {
   const [thread, setThread] = useState<ThreadState>({ kind: 'none' });
   // Focus the input after a deliberate action that left a conversation open, not on first paint.
   const [focusInput, setFocusInput] = useState(false);
+  // Below 768 px the list is a drawer; this is whether it is open (it is never open at two columns).
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const listRef = useRef<AbortController | null>(null);
   const loadRef = useRef<AbortController | null>(null);
   const createRef = useRef<AbortController | null>(null);
@@ -174,7 +179,12 @@ export function ChatWorkspace() {
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-6 md:grid-cols-[16rem_1fr]">
       <h1 className="sr-only">Team Assistant</h1>
-      <aside className="flex flex-col gap-3">
+      <ConversationDrawer
+        open={drawerOpen}
+        onOpen={openDrawer}
+        onClose={closeDrawer}
+        id="conversation-drawer"
+      >
         {listState === 'loading' ? (
           <p role="status" className="text-sm text-neutral-500" data-testid="conversations-loading">
             Loading chats…
@@ -187,14 +197,21 @@ export function ChatWorkspace() {
           <ConversationList
             items={items}
             selectedId={selectedId}
-            onSelect={select}
-            onNewChat={newChat}
+            onSelect={(id) => {
+              setDrawerOpen(false);
+              select(id);
+            }}
+            onNewChat={() => {
+              setDrawerOpen(false);
+              newChat();
+            }}
             unavailable={listState === 'error'}
           />
         ) : null}
-        {actionError ? <Failure what="Could not start a new chat" error={actionError} /> : null}
-      </aside>
+      </ConversationDrawer>
       <section className="min-w-0" aria-label="Chat">
+        {/* Outside the drawer: below 768 px the drawer has already closed when a new chat fails. */}
+        {actionError ? <Failure what="Could not start a new chat" error={actionError} /> : null}
         {thread.kind === 'none' ? (
           <p role="status" className="text-sm text-neutral-500" data-testid="chat-pick">
             {items.length === 0 && listState === 'ready'

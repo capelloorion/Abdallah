@@ -501,4 +501,73 @@ describe('<ChatWorkspace />', () => {
       expect(ask).not.toHaveBeenCalled();
     });
   });
+
+  describe('the drawer below 768 px', () => {
+    const chatsButton = () => screen.getByRole('button', { name: 'Chats' });
+
+    it('opens from the Chats button and closes when a conversation is picked', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [open(ID_A)]: () => json(DETAIL_A),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByRole('list');
+      expect(chatsButton()).toHaveAttribute('aria-expanded', 'false');
+      await user.click(chatsButton());
+      expect(chatsButton()).toHaveAttribute('aria-expanded', 'true');
+      const drawer = screen.getByRole('dialog', { name: 'Chats' });
+      await user.click(within(drawer).getByRole('button', { name: /Trace ids/ }));
+      expect(chatsButton()).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(await screen.findByText('How does it work?')).toBeInTheDocument(); // the pick still opened the chat
+      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveFocus());
+    });
+
+    it('closes when + New chat is pressed, and the new chat still starts', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [CREATE]: () =>
+          json({ id: ID_NEW, title: 'New conversation', updated_at: '2026-10-06T12:00:00Z' }, 201),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByRole('list');
+      await user.click(chatsButton());
+      await user.click(
+        within(screen.getByRole('dialog')).getByRole('button', { name: '+ New chat' }),
+      );
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveFocus());
+    });
+
+    it('shows a failed new chat outside the drawer, which has already closed', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [CREATE]: () => err('upstream_error', 502),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByRole('list');
+      await user.click(chatsButton());
+      await user.click(
+        within(screen.getByRole('dialog')).getByRole('button', { name: '+ New chat' }),
+      );
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Could not start a new chat (upstream_error).');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByRole('region', { name: 'Chat' })).toContainElement(alert);
+    });
+
+    it('Esc closes it and focus returns to the Chats button', async () => {
+      routes({ [LIST]: () => json({ items: SUMMARIES, count: 2 }) });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByRole('list');
+      await user.click(chatsButton());
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(chatsButton()).toHaveFocus();
+    });
+  });
 });

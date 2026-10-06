@@ -7,6 +7,21 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-06
+
+### Added
+
+- **Conversation drawer on small screens.** Below 768 px the conversation list collapses behind a **Chats** button and opens as a drawer over the page; at 768 px and above the two-column layout is unchanged (the button is hidden and the list is always shown). `ConversationDrawer` (`src/components/chat/ConversationDrawer.tsx`) owns the behaviour: the button reports `aria-expanded` and `aria-controls`; opening moves focus into the drawer, which is a modal dialog ("Chats") while open and keeps Tab inside it; **Esc**, the backdrop or **Close** dismiss it and return focus to the button; picking a row or **+ New chat** closes it and focus goes where that action sends it (the input); growing the window to two columns closes it.
+- `ChatWorkspace` wraps its list column in the drawer; the list itself (`ConversationList`) is unchanged.
+
+### Hardening from review
+
+- Esc and the Tab trap are handled at the document while the drawer is open, so they still work when focus has fallen to the page body (a click on blank space in the drawer); Tab from outside brings focus back in. When an action closes the drawer and leaves focus nowhere (the chat was already open, the request failed), focus goes to the **Chats** button instead of being lost. A failed **+ New chat** is shown in the chat area, not inside the drawer that has already closed.
+
+### Tests
+
+- `ConversationDrawer.test.tsx` and drawer cases in `ChatWorkspace.test.tsx`: collapsed by default, open/close by button, Esc, backdrop and Close, focus in and back, Tab trapped both ways, closing on pick and on + New chat, closing when the window widens, the two-column classes. Each guard was proven by removing it and watching a test fail. Layout itself (CSS breakpoints) cannot be checked in jsdom: see the manual check on the roadmap item.
+
 ## [0.7.0] — 2026-10-06
 
 ### Added

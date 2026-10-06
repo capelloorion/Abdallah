@@ -196,7 +196,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 2.5 — Conversation drawer on small screens
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [2.3]
 - **layers:** [ui]
 - **acceptance:**
@@ -204,13 +204,24 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - the drawer is keyboard- and screen-reader-operable (focus moves in, **Esc** closes, the button reports expanded/collapsed)
   - at 768 px and above the two-column layout is unchanged
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **505 passed** (new: `ConversationDrawer.test.tsx` and the drawer cases in `ChatWorkspace.test.tsx`)
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` lists `○ /chat`
+  - by hand, mock mode (`MOCK_UPSTREAM=true`, `pnpm -C apps/web dev`, http://localhost:3000/chat), in the browser dev tools device toolbar:
+    - at 1024 px wide: the list is on the left, there is no **Chats** button — as before
+    - at 390 px wide: only a **Chats** button and the chat area show; press **Chats** → the list slides over the page with a dark backdrop, focus is on **Close**
+    - press Tab repeatedly → focus cycles inside the drawer; **Esc** → it closes and focus is back on **Chats**; open again and tap the backdrop → closes
+    - open it and pick a chat → the drawer closes and that chat opens; open it and press **+ New chat** → closes and the new chat is ready
+    - open it, then widen the window past 768 px → it closes by itself and the two columns appear
 - **needs_human:**
-  - check the drawer on a phone-width viewport during the manual smoke
+  - check the drawer on a phone-width viewport during the manual smoke (the breakpoint, the backdrop and the scroll of a long list are CSS, which the unit tests cannot see)
 - **notes:**
   - 2026-10-06 — planned from the wireframe's "below 768 px" rule.
 
 ## Phase 3 — Real contract and cleanup
+
+- 2026-10-06 — started by Claude
+- 2026-10-06 — implemented; awaiting test. Review run: `code-reviewer` (no blockers; fixed: Esc and Tab trap at the document, focus never lost when an action closes the drawer, a failed new chat shown outside the drawer, sharper tests). Files: `apps/web/src/components/chat/ConversationDrawer.tsx` + test (new), `ChatWorkspace.tsx` + test, docs, version 0.7.0 → 0.8.0. Native Tailwind breakpoints only (`md:`), no new dependency. The drawer is a modal dialog only while open; at two columns it is never open.
+  - 2026-10-06 — confirmed by the developer (done). The phone-width check in a browser (needs_human above) is still theirs to do.
 
 ### 3.1 — Switch to the generated api contract and run against the real api
 
