@@ -7,6 +7,13 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-06
+
+### Added
+
+- A **"chats are shared" notice** at the top of `/chat`: "Conversations are visible to everyone using Team Assistant and are kept. Do not enter personal data, passwords, keys or other confidential information. Answers can be wrong; check the cited document." Until sign-in exists (ADR-0014) every conversation is visible to everyone, and this is the control the threat model (`shared-conversations`, C1/C3/R1/R4) relies on. It is plain text in the normal page flow (never fixed, sticky or absolute), so it cannot cover the thread or the input at any width. `SharedChatsNotice` (`src/components/chat/SharedChatsNotice.tsx`) holds the wording in one constant.
+- **The wording is the one proposed in the threat model and is still waiting for the team to approve it**; changing it means editing that constant and its test.
+
 ## [0.9.0] — 2026-10-06
 
 ### Removed

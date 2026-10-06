@@ -266,15 +266,22 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 4.1 — "Chats are shared" notice
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [api:1.3]
 - **layers:** [ui]
 - **acceptance:**
   - `/chat` shows a persistent one-line notice that conversations are visible to everyone using the app and that personal or confidential data should not be entered; the wording is the one the team accepted in the `api:1.3` threat model
   - the notice does not cover the thread or the input at any width
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: all pass (new: `SharedChatsNotice.test.tsx`)
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` lists `○ /chat`
+  - by hand, `pnpm -C apps/web dev`, open http://localhost:3000/chat: an amber notice sits above the chat with the wording "Conversations are visible to everyone using Team Assistant and are kept. Do not enter personal data, passwords, keys or other confidential information. Answers can be wrong; check the cited document."
+  - at 1024 px and at 390 px wide (browser device toolbar): the notice wraps onto more lines but never covers the conversation list, the thread or the question box, and it scrolls away with the page
 - **needs_human:**
-  - the team confirms the notice wording (it comes from the `api:1.3` threat-model decision)
+  - **the team approves the notice wording** (threat model section 9; open item "Notice wording approved" in section 11). The text shipped here is the proposed one. Per the threat model it must be approved, and this item shipped, before or with the first release that stores content (api 2.2)
+  - look at `/chat` once in a browser at desktop and phone width
 - **notes:**
   - 2026-10-06 — planned from ADR-0014 (shared conversations until auth lands).
+  - 2026-10-06 — started by Claude. The wording is the PROPOSED one from the threat model (section 9); the team has not approved it yet — see needs_human.
+  - 2026-10-06 — implemented; awaiting test. Files: `apps/web/src/components/chat/SharedChatsNotice.tsx` + test (new), `apps/web/src/app/chat/page.tsx`, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.9.0 → 0.10.0. The notice is three sentences, not literally one line: it is the proposed wording, kept whole. No reviewer agents run: a static, text-only component with no data, state or boundary.
+  - 2026-10-06 — confirmed by the developer (done). The team approval of the wording and the browser look (needs_human above) are still open.
