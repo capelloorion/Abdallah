@@ -24,7 +24,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 1.1 — Conversation BFF routes (list, create, get)
 
-- **status:** todo
+- **status:** done
 - **depends_on:** []
 - **layers:** [bff]
 - **acceptance:**
@@ -33,11 +33,24 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - with `MOCK_UPSTREAM=true` all three return fixtures from `src/mocks/conversations.ts` (a list of several conversations, one with messages and citations) with `x-mock-upstream: true`; works against fixtures until `api:1.2` lands
   - every response echoes `x-trace-id`; the routes are tested in both mock and real modes
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **238 passed** (api: 315 passed); the new file is `apps/web/src/app/api/v1/conversations/routes.test.ts` (102 tests, both mock and real modes)
+  - `pnpm -C apps/web typecheck` clean, and `pnpm -C apps/web build` lists `ƒ /api/v1/conversations` and `ƒ /api/v1/conversations/[id]` (delete `apps/web/.next` afterwards before running `next dev`)
+  - mock mode by hand: put `MOCK_UPSTREAM=true` in `apps/web/.env.local`, run `pnpm -C apps/web dev`, then
+    - `curl -si localhost:3000/api/v1/conversations` → `200`, headers `x-mock-upstream: true`, `x-trace-id`, `cache-control: no-store`; three conversations, newest first
+    - `curl -s "localhost:3000/api/v1/conversations?limit=1"` → one item; `?limit=0` → `422 {"error":"validation_error","trace_id":…}`
+    - `curl -s -X POST localhost:3000/api/v1/conversations -H "content-type: application/json" -d '{"title":"Hi"}'` → `201` with `"title":"Hi"`; the same without the `content-type` header → `415`
+    - `curl -s localhost:3000/api/v1/conversations/3f2b9c1e-5a47-4d8e-9b6a-1c0d2e3f4a51` → `200` with messages and citations; `…/00000000-0000-4000-8000-000000000000` → `404 not_found`; `…/abc` → `422`
+  - real mode (needs the api running with a database, see needs_human): unset `MOCK_UPSTREAM`, run the api on `:8000`, repeat the calls → the api's own bodies, no `x-mock-upstream` header; stop the api → `502 {"error":"upstream_unreachable","target":"api",…}`
 - **needs_human:**
-  - none
+  - to try real mode: the api running against the dev database (migration 1.1 applied through `migrate.yml`, `DATABASE_URL` in `apps/api/.env` — secrets, not set by an agent)
+  - confirm `MOCK_UPSTREAM` is never set in a deployed environment: nothing in `infra/`, `.github/`, `docker-compose.yml`, the Dockerfile or the `.env.example`s sets it (checked), and the code refuses it only when `APP_ENV=prod`
 - **notes:**
   - 2026-10-06 — planned. Fixture types are written by hand with `// TODO(contract)` until `api:1.2`.
+  - 2026-10-06 — started by Claude
+  - 2026-10-06 — implemented; awaiting test by the developer. Files: `apps/web/src/app/api/v1/conversations/route.ts` (GET list, POST create) and `[id]/route.ts` (GET one), `apps/web/src/lib/bff-json.ts` (`bff`, `proxyJson`, `errorResponse`, `readTextCapped`), `apps/web/src/lib/conversation-limits.ts`, `apps/web/src/mocks/conversations.ts`, the route tests, `docs/reference/http-api.md`, `apps/web/CLAUDE.md`, `apps/web/src/mocks/README.md`, `apps/web/CHANGELOG.md`, version 0.1.0 → 0.2.0. Fixtures are typed from the generated `api-types.ts` (api:1.2 is done), so there are no hand-typed `TODO(contract)` shapes — web 3.1 now only has to run against the real api.
+  - 2026-10-06 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: `POST` now requires `content-type: application/json` (a cross-site form or `no-cors` fetch could otherwise create conversations), 5 s body-read deadline, lone-surrogate titles rejected, `no-store` + `nosniff` on every response, upstream redirects refused, a timeout while reading the api's reply is `upstream_unreachable`, constants moved out of `route.ts`, hermetic tests with env restore, and many edge-case tests (each new guard proven by a mutation check).
+  - 2026-10-06 — NOT done here (threat-model items, no roadmap item yet): P2 rate limit on create and ingress/server request timeouts; P4 a byte cap on the api reply (`res.json()` buffers it; the api bounds its own output with limit 100, the 500-message cap and citation size caps); P6 CSP and the rest of the security headers. Not forwarded-safe yet: titles may contain control or bidi-override characters (the api does not strip them on create) — the UI items must render titles as plain text. The mock is stateless, so a created conversation does not appear in the mock list: web 2.3 must add it to its own list.
+  - 2026-10-06 — confirmed by the developer (done). Trying it against the real api (needs_human above) is still open.
 
 ### 1.2 — Ask-stream BFF route
 

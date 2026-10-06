@@ -28,6 +28,14 @@ URL.
 - `src/app/api/v1/assistant/ask/route.ts` + `ask/stream/route.ts` — **example business routes**
   (JSON + SSE) that proxy `${API_BASE_URL}/v1/assistant/…` or, with `MOCK_UPSTREAM=true`, serve
   `src/mocks/assistant.ts`. `src/app/chat/page.tsx` — the example chat page on them.
+- `src/app/api/v1/conversations/route.ts` (`GET` list, `POST` create) + `[id]/route.ts` (`GET` one) —
+  the **conversation BFF routes** (web 1.1). They validate what they forward (`limit` 1–100, a UUID
+  `id`, a size-capped body reduced to a trimmed `title`), pass the api's status and error body
+  through, and serve `src/mocks/conversations.ts` with `MOCK_UPSTREAM=true`. `src/lib/bff-json.ts` —
+  `bff` (`withBff` + `no-store`/`nosniff`), `proxyJson` (JSON in, JSON out, bounded `502`s, no redirects,
+  no upstream headers relayed), `errorResponse`, `readTextCapped` (size- and time-capped body read);
+  `src/lib/conversation-limits.ts` — the limits (a `route.ts` may export only handlers). `POST` requires
+  `content-type: application/json` (`415`).
 - `src/components/chat/` — `ChatThread`, `MessageInput`, `ChatPanel` (Tailwind, RTL-tested).
 - `src/lib/stream.ts` (`streamUpstream`/`proxyStream`), `src/lib/sse.ts` (frame parser/builder),
   `src/lib/chat-client.ts` (`askStream`, browser → BFF), `src/lib/mocks.ts`

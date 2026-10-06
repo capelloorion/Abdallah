@@ -1,8 +1,8 @@
 # HTTP API reference
 
 The complete HTTP surface of both services as they exist today: the operational foundation
-(`/ping`, `/info`, `/health`), the first business endpoints (`/v1/conversations`, api only — the
-BFF mirror is a later roadmap item) and the two demo BFF routes in `apps/web` that exercise the
+(`/ping`, `/info`, `/health`), the first business endpoints (`/v1/conversations` on the api, mirrored by
+`/api/v1/conversations` on the BFF) and the two demo BFF routes in `apps/web` that exercise the
 `web → api` hop. Derived from the route
 source, cross-checked against the test suites (`routes.test.ts`, `test_routes.py`).
 
@@ -171,6 +171,31 @@ liveness + observability state (`apps/web/src/app/health/route.ts`).
 
 ---
 
+### BFF: `/api/v1/conversations` (chat history)
+
+Source: `apps/web/src/app/api/v1/conversations/route.ts` and `[id]/route.ts`; shared helper
+`src/lib/bff-json.ts`. Each handler is wrapped in `withBff`, calls the api only through
+`fetchUpstream`, and passes the api's status and `{ error, trace_id }` body through unchanged.
+
+| Method | BFF route                    | Upstream                     | What the BFF checks first                                                                                                                                                                                                                                                                |
+| ------ | ---------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/conversations`      | `GET /v1/conversations`      | `limit`, if present, is an integer 1–100 (else `422 validation_error`); only the validated `limit` is forwarded                                                                                                                                                                          |
+| POST   | `/api/v1/conversations`      | `POST /v1/conversations`     | `content-type: application/json` (else `415 unsupported_media_type`); body ≤ 4 KB (else `413 payload_too_large`) and received within 5 s (else `408 request_timeout`); a JSON object with an optional well-formed string `title` ≤ 200 UTF-16 units; only a trimmed `title` is forwarded |
+| GET    | `/api/v1/conversations/{id}` | `GET /v1/conversations/{id}` | `id` is a UUID (else `422 validation_error`) — it is placed in the upstream path, so nothing else may reach it                                                                                                                                                                           |
+
+- An unreachable api, a timeout (while connecting or while reading the reply) or a redirect →
+  `502 { error: "upstream_unreachable", target: "api", trace_id }`; an api reply that is not JSON (a proxy
+  page, an empty `204`) → `502 { error: "upstream_error", target: "api", trace_id }`. Neither relays the
+  upstream body, and no upstream header (cookies, `server`) is relayed either.
+- Every response carries `cache-control: no-store` and `x-content-type-options: nosniff` — the payloads
+  are shared user content.
+- The `id` must be a canonical hyphenated UUID; the api also accepts un-hyphenated and braced forms, the
+  BFF does not (the UI only sends ids the api returned).
+- With `MOCK_UPSTREAM=true` (refused in `prod`) the routes serve `src/mocks/conversations.ts` — typed
+  from the generated contract — with `x-mock-upstream: true`. The mock is stateless: `POST` returns a
+  fresh conversation but the list does not grow, and an unknown id answers `404 not_found`.
+- Titles and message text are user content and are never logged.
+
 ## api error contract (`apps/api`, `app/errors.py`)
 
 Every non-2xx response from the api — operational routes and `/v1` alike — has exactly this body,
@@ -251,6 +276,6 @@ disabled/degraded state never crashes the service — see `.claude/rules/60-obse
   [`../../.claude/rules/05-api-versioning.md`](../../.claude/rules/05-api-versioning.md).
 - **The only exemption**: the operational endpoints `/ping`, `/info`, `/health` (both services)
   stay unversioned — container/Azure health probes target fixed paths.
-- **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2). `apps/web` has no
-  BFF route for it yet (web roadmap 1.1); the template's example `/api/v1/assistant/*` routes
-  are the only business-shaped BFF routes.
+- **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2) and `apps/web`
+  mirrors it under `/api/v1/conversations` (web 1.1). The template's example `/api/v1/assistant/*`
+  routes are still there until web 3.2 retires them.

@@ -3,7 +3,7 @@
 The frontend developer builds against **fixtures** until the api endpoint exists, then deletes
 the mock branch. The rules:
 
-- One module per feature (`assistant.ts`, `<feature>.ts`) exporting plain data (JSON fixtures)
+- One module per feature (`assistant.ts`, `conversations.ts` — typed straight from the generated contract, `<feature>.ts`) exporting plain data (JSON fixtures)
   and, for streaming routes, an array of SSE frames built with `sseFrame()`.
 - **Type every fixture against the contract**: import the generated types from
   `@/lib/api-types` (`docs/reference/openapi.json` → `make openapi`). If the endpoint is not in
