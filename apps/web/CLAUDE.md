@@ -25,9 +25,6 @@ URL.
   `withBff`, call upstream with `fetchUpstream`; on upstream failure return `502` with a
   `trace_id` (and `target: 'api'`) so the UI degrades gracefully.
 - `src/app/health/route.ts` — `/health`.
-- `src/app/api/v1/assistant/ask/route.ts` + `ask/stream/route.ts` — **example business routes**
-  (JSON + SSE) that proxy `${API_BASE_URL}/v1/assistant/…` or, with `MOCK_UPSTREAM=true`, serve
-  `src/mocks/assistant.ts` (kept until web 3.2).
 - `src/app/api/v1/conversations/route.ts` (`GET` list, `POST` create) + `[id]/route.ts` (`GET` one) —
   the **conversation BFF routes** (web 1.1). They validate what they forward (`limit` 1–100, a UUID
   `id`, a size-capped body reduced to a trimmed `title`), pass the api's status and error body
@@ -104,7 +101,7 @@ URL.
 - **Working ahead of the api:** `MOCK_UPSTREAM=true` in `.env.local` makes a route serve its
   `src/mocks/<feature>.ts` fixture (`isMockUpstream()` / `mockJson` / `mockSse` in
   `src/lib/mocks.ts`); fixtures are typed against `src/lib/api-types.ts` (generated — `make
-openapi`). Example: `/api/v1/assistant/ask[/stream]` + the `/chat` page.
+openapi`). Example: `/api/v1/conversations[/…]` + `src/mocks/conversations.ts` + the `/chat` page.
 - **UI (ADR-0010/0011):** Tailwind v4 utilities; components in `src/components/<area>/` with a
   `*.test.tsx` beside each (`// @vitest-environment jsdom`, RTL, `afterEach(cleanup)`); the
   browser-side streaming client is `src/lib/chat-client.ts` (`askStream`), SSE parsing in

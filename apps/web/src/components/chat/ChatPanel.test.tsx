@@ -7,7 +7,7 @@ import { ChatPanel, MAX_ANSWER_CHARS } from './ChatPanel';
 
 const TRACE = '0eb01' + 'c'.repeat(27);
 const API = { title: 'The api service', path: 'docs/api.md' };
-const ENDPOINT = '/api/v1/assistant/ask/stream';
+const ENDPOINT = '/api/v1/conversations/3f2b9c1e-5a47-4d8e-9b6a-1c0d2e3f4a51/ask/stream';
 
 function stream(frames: string[], init: ResponseInit & { trace?: string } = {}) {
   const headers: Record<string, string> = { 'content-type': 'text/event-stream' };

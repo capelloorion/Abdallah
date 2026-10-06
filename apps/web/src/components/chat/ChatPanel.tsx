@@ -8,7 +8,7 @@ import { MessageInput } from './MessageInput';
 import type { ChatMessage } from './types';
 
 interface Props {
-  /** Same-origin SSE route, e.g. `/api/v1/assistant/ask/stream` (the BFF rule: never the api). */
+  /** Same-origin SSE route, e.g. `/api/v1/conversations/{id}/ask/stream` (the BFF rule: never the api). */
   endpoint: string;
   title?: string;
   /** Messages already stored for this conversation (already parsed and sanitized). */

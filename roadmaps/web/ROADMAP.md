@@ -242,7 +242,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 3.2 — Retire the template's `assistant` example
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [2.4]
 - **layers:** [bff, docs]
 - **acceptance:**
@@ -250,11 +250,17 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - `docs/reference/http-api.md`, `apps/web/CLAUDE.md` and `src/mocks/README.md` describe the conversation routes instead
   - nothing else imports the removed files; `just test` is green
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: all pass (the removed `assistant/routes.test.ts` is gone; nothing else changed in the count except those tests)
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` lists `○ /chat` and no `/api/v1/assistant/*` routes
+  - `git grep -n "v1/assistant|mocks/assistant" -- apps/web` finds nothing in code (only the changelog history)
+  - by hand, `pnpm -C apps/web dev` with `MOCK_UPSTREAM=true`: `/chat` still lists, creates and answers; `Invoke-WebRequest http://localhost:3000/api/v1/assistant/ask/stream -Method Post` → 404
 - **needs_human:**
-  - confirm the deletion of the example files (deleting files is a hard stop)
+  - none left: the developer confirmed the deletion of the four example files in chat (they are removed with `git rm`, so they stay in git history)
 - **notes:**
   - 2026-10-06 — planned.
+  - 2026-10-06 — started by Claude; the developer confirmed the deletion of the four example files in chat.
+  - 2026-10-06 — implemented; awaiting test. Removed: `apps/web/src/app/api/v1/assistant/ask/route.ts`, `ask/stream/route.ts`, `routes.test.ts`, `apps/web/src/mocks/assistant.ts`. Edited: `src/app/chat/page.tsx` (no MOCK_UPSTREAM hint), `ChatPanel.tsx` (comment) and its test (endpoint), `src/mocks/README.md`, `apps/web/CLAUDE.md`, `docs/reference/http-api.md`, `apps/web/CHANGELOG.md`, version 0.8.0 → 0.9.0. `docs/architecture/ai.md` still shows a generic api-side `/v1/assistant` route as a how-to for a project's own feature (it is about the api, not this web example) and ADR-0010 is history: both left alone.
+  - 2026-10-06 — confirmed by the developer (done).
 
 ## Phase 4 — Hardening
 

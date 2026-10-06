@@ -7,6 +7,16 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-06
+
+### Removed
+
+- The template's example business routes `/api/v1/assistant/ask` and `/api/v1/assistant/ask/stream` (the BFF routes, their tests and the `src/mocks/assistant.ts` fixtures). Nothing in the app used them since `/chat` moved to the conversation routes (web 2.3); the chat page no longer mentions the example or `MOCK_UPSTREAM`. Anything calling those two paths must use `/api/v1/conversations/{id}/ask/stream` instead. No api change.
+
+### Changed
+
+- `apps/web/CLAUDE.md`, `src/mocks/README.md` and `docs/reference/http-api.md` describe the conversation routes and fixtures as the reference. `ChatPanel`'s tests use a conversation endpoint.
+
 ## [0.8.0] — 2026-10-06
 
 ### Added

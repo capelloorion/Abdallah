@@ -293,5 +293,5 @@ disabled/degraded state never crashes the service — see `.claude/rules/60-obse
 - **The only exemption**: the operational endpoints `/ping`, `/info`, `/health` (both services)
   stay unversioned — container/Azure health probes target fixed paths.
 - **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2) and `apps/web`
-  mirrors it under `/api/v1/conversations` (web 1.1). The template's example `/api/v1/assistant/*`
-  routes are still there until web 3.2 retires them.
+  mirrors it under `/api/v1/conversations` (web 1.1). The template's example
+  `/api/v1/assistant/*` routes were removed in web 3.2.
