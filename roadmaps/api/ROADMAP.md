@@ -352,10 +352,11 @@ human steps listed on each item.
   - decide the numbers (body size, requests per minute, concurrent streams) and whether the limit also belongs at the Container Apps ingress or the web BFF (threat model P2/P4; the infra roadmap would own an ingress setting)
 - **notes:**
   - 2026-10-06 — planned by `/plan-roadmap api` from the open points left by api 1.2, 2.2 and 3.1 (threat model D2/D4/A7, risk R2 accepted until this ships). The 60 s stream deadline covers waits for the model, not writes to the client. A web counterpart (rate limit at the BFF, request timeouts) belongs in the web roadmap.
+  - 2026-10-07 — decision (developer): per-client rate limiting belongs in the web BFF, which sees the real client address (the api is reached only by the BFF, so a per-IP limit there would see one client). When 5.2 is built it is split: the api gets a global concurrent-stream cap, the body-size cap and the write-stall timeout; the per-browser rate limit becomes a new item in the web roadmap.
 
 ### 5.3 — Cap the model output and record ask outcomes
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [3.1]
 - **layers:** [ai]
 - **acceptance:**
@@ -363,11 +364,23 @@ human steps listed on each item.
   - one bounded metric counts ask outcomes (`ok`, `ai_unavailable`, `timeout`, `client_disconnected`, `cut`) with `route_class` and no ids or content; both `/ask` and `/ask/stream` record it
   - an answer cut at the character bound still reports usage when the model has reported it
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **483 passed** (web: 500 passed, unchanged); the new cases are in `apps/api/tests/ai/test_ai_config_client.py` (`TestOutputCap`: default, invalid, non-positive and over-ceiling values, the cap reaching the model, a caller override), `tests/ai/test_ai_telemetry_prompts.py` (the outcome metric only takes values from fixed sets and never raises), `tests/test_ask_api.py` and `tests/test_ask_stream_api.py` (outcomes per route, one outcome per ask, usage kept after the cut, a stall or missing `done` after the cut, and a test that every outcome literal in the router is one the metric accepts)
+  - `just openapi` then `git status` — no change (no request or response shape changed)
+  - `uv run --directory apps/api python -c "from app.ai.config import get_ai_settings; print(get_ai_settings().max_output_tokens)"` → `6000`; with `AI_MAX_OUTPUT_TOKENS=1500` in the environment → `1500`; with `99999999` → `16000`
+  - with the dev setup from 2.2/3.1: ask a question and, in Application Insights, query the custom metric `team-assistant.ai.ask.outcomes` — one row per ask with `route_class` `ask` or `ask_stream` and `outcome` `ok`; ask with `AZURE_AI_ENDPOINT` unset → `ai_unavailable`; close curl mid-stream → `client_disconnected`
+  - logs: no question, answer, title or path in any line; after a cut answer, a failed usage read logs `ask stream usage unavailable` with a bounded `error_kind` only
 - **needs_human:**
-  - choose the cap with the model owner (a low cap truncates real answers); confirm what the Foundry deployment reports as usage
+  - choose the cap with the model owner (a low cap truncates real answers; 6000 tokens is about 20,000 English characters and fewer characters for dense text such as Arabic). A model that stops at the cap is counted `ok`, not `cut`, and its answer is just shorter: `cut` means only that the 20,000-character bound was hit
+  - confirm what the Foundry deployment reports as usage (`input_tokens` / `output_tokens`), and whether a reasoning model counts hidden reasoning tokens against the cap
+  - the cost trade-off of reading the model to its end after a cut: up to the cap in tokens and 10 s more, in exchange for an accurate `token_count`
+  - the shared-conversations threat model (A7, team-owned) still lists the per-ask token bound as "question cap + history + top_k"; add the output cap there when the team next edits it
 - **notes:**
   - 2026-10-06 — planned from api 2.2 and 3.1: the answer is only cut after it is generated, and an answer stopped at the cap loses `output_tokens` (so `token_count` is `NULL` for exactly the most expensive answers). Cardinality rules: `.claude/rules/60-observability.md`.
+  - 2026-10-07 — started by Claude.
+  - 2026-10-07 — implemented; awaiting test by the developer. Files: `apps/api/app/ai/config.py` (`AI_MAX_OUTPUT_TOKENS`, default 6000, ceiling 16000), `apps/api/app/ai/client.py` (`max_tokens`, verified in langchain-openai 1.6.6 to be sent as `max_completion_tokens`), `apps/api/app/ai/telemetry.py` (`record_ask_outcome`, `ASK_OUTCOMES`, `ASK_ROUTE_CLASSES`), `apps/api/app/routers/ask.py` (outcomes in both routes; a streamed answer cut at the character bound is now read to its end for the usage, for at most 10 s), tests, both `.env.example`s, `docker-compose.yml`, `docs/reference/environment-variables.md`, `docs/reference/http-api.md`, `docs/architecture/ai.md`, `.claude/rules/70-ai.md`, `apps/api/CHANGELOG.md`, version 0.8.1 → 0.9.0 (`pyproject.toml`, `uv.lock` by hand on lock revision 3). No migration, no Bicep change (the setting has a default in code), nothing applied, no Azure service contacted.
+  - 2026-10-07 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: a late disconnect counted a second outcome (now one outcome per ask), a stalled usage read after the cut could hold the stream for the full deadline (now 10 s), failures after the cut leave a bounded log line, a ceiling on the cap, the cap's comment (it is per call, so a retry can spend it again), a failed answer write in `/ask` is counted as `error`, and tests for a stall or missing `done` after the cut, the late disconnect, and the outcome literals.
+  - 2026-10-07 — NOT done here: (a) no SSE heartbeat while the usage is read after a cut (the client sees nothing for up to 10 s before `done`); (b) a model that stops at the token cap (`finish_reason: length`) is not distinguished from a normal end; (c) `docs/security/threat-models/shared-conversations.md` A7 not updated (team-owned).
+  - 2026-10-07 — confirmed by the developer (done). Choosing the cap with the model owner and the real-usage checks (needs_human above) are still open.
 
 ### 5.4 — Say which retrieved chunks each citation covers
 

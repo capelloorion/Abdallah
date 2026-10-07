@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -456,7 +457,7 @@ def test_a_failed_write_is_an_error_frame_and_never_done(stream_setup: Any) -> N
     assert "done" not in names(parsed) and "CANARY" not in res.text  # no content in the frame
 
 
-def test_a_huge_answer_stops_at_the_cap_and_the_stored_text_equals_what_was_streamed(
+def test_a_huge_answer_is_cut_at_the_cap_and_the_stored_text_equals_what_was_streamed(
     stream_setup: Any,
 ) -> None:
     conversation = _conversation()
@@ -466,8 +467,10 @@ def test_a_huge_answer_stops_at_the_cap_and_the_stored_text_equals_what_was_stre
     streamed = "".join(d["text"] for e, d in parsed if e == "token")
     assert len(streamed) == MAX_ANSWER_CHARS and "never" not in streamed
     assert session.added[1].content == streamed
-    assert names(parsed)[-1] == "done" and parsed[-1][1]["output_tokens"] is None
-    assert model.closed
+    # The model is read to its end only to learn the usage; none of the later text is kept.
+    assert names(parsed)[-1] == "done" and parsed[-1][1]["output_tokens"] == 5
+    assert model.closed  # the model stream was read to its end and released
+    assert session.added[1].token_count == 5
 
 
 # ---- a stream that is not what the graph promised ---------------------------------------------
@@ -713,3 +716,150 @@ def test_a_streamed_follow_up_is_retrieved_with_the_previous_stored_user_turn(
     assert [q for q, _ in retriever.calls] == [
         "How does trace_id propagation work?\nAnd on the api side?"
     ]
+
+
+# ---- output cap and ask outcomes (roadmap api:5.3) --------------------------------------------
+
+
+class _Outcomes:
+    """Stands in for ``record_ask_outcome`` so a test can read what was recorded."""
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, str]] = []
+
+    def __call__(self, route_class: str, outcome: str) -> None:
+        self.seen.append((route_class, outcome))
+
+
+@pytest.fixture()
+def outcomes(monkeypatch: pytest.MonkeyPatch) -> _Outcomes:
+    recorder = _Outcomes()
+    monkeypatch.setattr(ask_router, "record_ask_outcome", recorder)
+    return recorder
+
+
+def test_a_failure_after_the_cap_still_keeps_the_cut_answer_and_loses_only_the_usage(
+    stream_setup: Any, outcomes: _Outcomes
+) -> None:
+    conversation = _conversation()
+    session = ClosingSession(found=conversation)
+    model = StreamingModel(chunks=["y" * 15_000, "z" * 15_000, "later"], fail_at=2)
+    parsed = frames(_post(stream_setup(session, model=model), conversation).text)
+    assert names(parsed)[-1] == "done" and parsed[-1][1]["output_tokens"] is None
+    assert (
+        len(session.added[1].content) == MAX_ANSWER_CHARS and session.added[1].token_count is None
+    )
+    assert outcomes.seen == [("ask_stream", "cut")]
+
+
+def test_stream_outcomes_ok_and_failures(stream_setup: Any, outcomes: _Outcomes) -> None:
+    conversation = _conversation()
+    _post(stream_setup(ClosingSession(found=conversation)), conversation)
+    _post(
+        stream_setup(ClosingSession(found=conversation), model=StreamingModel(fail_at=1)),
+        conversation,
+    )
+    _post(
+        stream_setup(
+            ClosingSession(found=conversation), retriever=Boom(ConnectionError("search down"))
+        ),
+        conversation,
+    )
+    assert outcomes.seen == [
+        ("ask_stream", "ok"),
+        ("ask_stream", "error"),  # an error frame after the first frame
+        ("ask_stream", "ai_unavailable"),  # a JSON 503 before it
+    ]
+
+
+def test_stream_timeout_outcomes(
+    stream_setup: Any, outcomes: _Outcomes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ask_router, "ASK_TIMEOUT_SECONDS", 0.3)
+    conversation = _conversation()
+    _post(
+        stream_setup(ClosingSession(found=conversation), model=StreamingModel(stall_at=1)),
+        conversation,
+    )
+    assert outcomes.seen == [("ask_stream", "timeout")]
+
+
+def test_a_client_that_leaves_is_counted(outcomes: _Outcomes) -> None:
+    conversation = _conversation()
+    session = FakeSession(found=conversation)
+    graph = build_graph(chat_model=StreamingModel(), retriever=FakeRetriever([CHUNK]))
+    _consume(session, graph, disconnected=True)
+    assert outcomes.seen == [("ask_stream", "client_disconnected")]
+
+
+def test_a_stall_while_reading_the_usage_after_the_cut_keeps_the_answer_and_ends_quickly(
+    stream_setup: Any, outcomes: _Outcomes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ask_router, "DRAIN_AFTER_CUT_SECONDS", 0.2)
+    conversation = _conversation()
+    session = ClosingSession(found=conversation)
+    model = StreamingModel(chunks=["y" * 15_000, "z" * 15_000, "later"], stall_at=2)
+    started = time.monotonic()
+    parsed = frames(_post(stream_setup(session, model=model), conversation).text)
+    assert time.monotonic() - started < 10  # not the 60 s deadline, not the 30 s stall
+    assert names(parsed)[-1] == "done" and parsed[-1][1]["output_tokens"] is None
+    assert len(session.added[1].content) == MAX_ANSWER_CHARS
+    assert outcomes.seen == [("ask_stream", "cut")]
+
+
+def test_a_stream_that_ends_without_done_after_the_cut_keeps_the_answer(
+    stream_setup: Any, outcomes: _Outcomes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_events(
+        monkeypatch,
+        ("sources", {"citations": [], "count": 0}),
+        ("token", {"text": "y" * (MAX_ANSWER_CHARS + 5)}),
+    )
+    conversation = _conversation()
+    session = ClosingSession(found=conversation)
+    parsed = frames(_post(stream_setup(session), conversation).text)
+    assert names(parsed)[-1] == "done" and parsed[-1][1]["output_tokens"] is None
+    assert len(session.added[1].content) == MAX_ANSWER_CHARS
+    assert outcomes.seen == [("ask_stream", "cut")]
+
+
+def test_a_late_disconnect_counts_only_the_real_outcome(
+    outcomes: _Outcomes,
+) -> None:
+    """The client leaves while ``done`` is being sent: the ask was ``ok``, not also disconnected."""
+    conversation = _conversation()
+    session = FakeSession(found=conversation)
+    graph = build_graph(chat_model=StreamingModel(), retriever=FakeRetriever([CHUNK]))
+
+    async def run() -> None:
+        response = await ask_question_stream(
+            session=session,  # type: ignore[arg-type]
+            graph=graph,
+            conversation_id=conversation.id,
+            body=AskRequest(question="q?"),
+            request=FakeRequest(),  # type: ignore[arg-type]
+        )
+        iterator = response.body_iterator
+        async for frame in iterator:
+            if frame.startswith("event: done"):
+                break
+        await iterator.aclose()  # the client went away right after `done`
+
+    asyncio.run(run())
+    assert outcomes.seen == [("ask_stream", "ok")]
+
+
+def test_every_outcome_literal_in_the_router_is_one_the_metric_accepts() -> None:
+    """A typo would pass the tests above (they replace the recorder) and be dropped in prod."""
+    import re
+    from pathlib import Path
+
+    from app.ai.telemetry import ASK_OUTCOMES, ASK_ROUTE_CLASSES
+
+    source = Path(ask_router.__file__).read_text(encoding="utf-8")
+    calls = re.findall(r"record_ask_outcome\(([^)]*)\)|\brecord\(([^)]*)\)", source)
+    literals = {s for call in calls for part in call for s in re.findall(r'"(\w+)"', part)}
+    assert literals, "no outcome literals found: the pattern needs updating"
+    assert literals <= ASK_OUTCOMES | ASK_ROUTE_CLASSES, literals - (
+        ASK_OUTCOMES | ASK_ROUTE_CLASSES
+    )

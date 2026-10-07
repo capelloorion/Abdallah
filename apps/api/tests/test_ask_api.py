@@ -806,3 +806,53 @@ def test_the_first_question_of_a_conversation_is_retrieved_as_it_is(setup: Any) 
     retriever = FakeRetriever([CHUNK])
     _ask(setup(FakeSession(found=conversation), retriever=retriever), conversation, "Which port?")
     assert [q for q, _ in retriever.calls] == ["Which port?"]
+
+
+# ---- ask outcomes (roadmap api:5.3) -----------------------------------------------------------
+
+
+@pytest.fixture()
+def outcomes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(ask_router, "record_ask_outcome", lambda r, o: seen.append((r, o)))
+    return seen
+
+
+def test_ask_outcomes_are_recorded_for_ok_cut_and_failures(
+    setup: Any, outcomes: list[tuple[str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conversation = _conversation()
+
+    def run(**kwargs: Any) -> None:
+        _ask(setup(FakeSession(found=conversation), **kwargs), conversation, "q?")
+
+    run()
+    run(model=RecordingModel(reply="y" * (MAX_ANSWER_CHARS + 10)))
+    run(model=RecordingModel(error=RuntimeError("boom")))
+    run(model=RecordingModel(reply="  "))
+    monkeypatch.setattr(ask_router, "ASK_TIMEOUT_SECONDS", 0.05)
+
+    class Slow(FakeRetriever):
+        async def retrieve(self, query: str, top_k: int = 5) -> list[Any]:
+            await asyncio.sleep(5)
+            return []
+
+    run(retriever=Slow())
+    assert outcomes == [
+        ("ask", "ok"),
+        ("ask", "cut"),
+        ("ask", "ai_unavailable"),
+        ("ask", "ai_unavailable"),
+        ("ask", "timeout"),
+    ]
+
+
+def test_a_failed_write_of_the_answer_is_counted_as_an_error(
+    setup: Any, outcomes: list[tuple[str, str]]
+) -> None:
+    conversation = _conversation()
+    session = FakeSession(found=conversation)
+    session.fail_commit_at = 2
+    res = _ask(setup(session), conversation, "q?")
+    assert res.status_code == 500
+    assert outcomes == [("ask", "error")]

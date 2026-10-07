@@ -69,6 +69,10 @@ def build_chat_model(
         "timeout": s.request_timeout_seconds,
         "max_retries": s.max_retries,
         "temperature": temperature,
+        # An explicit output cap per model call (a retry can spend it again): a runaway or injected
+        # answer is stopped at this many tokens (sent as max_completion_tokens; field verified in
+        # langchain-openai 1.6.6). A reasoning model counts its hidden reasoning tokens in it too.
+        "max_tokens": s.max_output_tokens,
         "streaming": streaming,
         # Ask Azure OpenAI to report token usage on the final streamed chunk too, so
         # telemetry sees input/output tokens for streamed answers (field verified in 1.6.6).

@@ -42,6 +42,11 @@ _model_duration: Histogram | None = None
 _model_tokens: Counter | None = None
 _model_failures: Counter | None = None
 _retrieval_duration: Histogram | None = None
+_ask_outcomes: Counter | None = None
+
+# The only values the ask-outcome metric may carry (rule 60: bounded attributes).
+ASK_ROUTE_CLASSES = frozenset({"ask", "ask_stream"})
+ASK_OUTCOMES = frozenset({"ok", "cut", "ai_unavailable", "timeout", "client_disconnected", "error"})
 
 
 def _instruments() -> tuple[Histogram, Counter, Counter, Histogram]:
@@ -189,7 +194,26 @@ def record_retrieval(duration_ms: float, outcome: str, hits: int | None = None) 
     )
 
 
+def record_ask_outcome(route_class: str, outcome: str) -> None:
+    """One finished (or failed) ask: ``team-assistant.ai.ask.outcomes`` by ``route_class`` and
+    ``outcome``. Both are checked against fixed sets, so no id, question or message can become a
+    series. Best-effort: never raises into the request path.
+    """
+    global _ask_outcomes
+    try:
+        if route_class not in ASK_ROUTE_CLASSES or outcome not in ASK_OUTCOMES:
+            return
+        if _ask_outcomes is None:
+            _ask_outcomes = get_meter("ai").create_counter(
+                "team-assistant.ai.ask.outcomes", unit="1", description="Ask requests by outcome"
+            )
+        _ask_outcomes.add(1, {"route_class": route_class, "outcome": outcome})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _reset_for_tests() -> None:
     """TEST-ONLY: drop cached instruments."""
-    global _model_duration, _model_tokens, _model_failures, _retrieval_duration
+    global _model_duration, _model_tokens, _model_failures, _retrieval_duration, _ask_outcomes
     _model_duration = _model_tokens = _model_failures = _retrieval_duration = None
+    _ask_outcomes = None

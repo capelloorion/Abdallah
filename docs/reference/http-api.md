@@ -170,8 +170,11 @@ Success is `200 text/event-stream` (`cache-control: no-cache`, `x-trace-id` head
 - **After the first frame** a failure is an `error` frame with a bounded `error_kind` (no message, no trace id — the UI
   reads the `x-trace-id` header). The question stays stored; **no assistant message** is stored, and there is no `done`.
 - A client that disconnects before `done` stores no assistant message. The whole round trip is limited to 60 s
-  (`error_kind: "timeout"` once streaming; the 60 s is wall-clock for the whole stream). An answer past 20,000 characters stops there (the stored text is the streamed text, trimmed,
-  and ends with `done` (`output_tokens` is `null`). A client that is already gone just before the write gets no stored answer.
+  (`error_kind: "timeout"` once streaming). The 60 s is wall-clock for the whole stream.
+- An answer past 20,000 characters stops there: the stored text is the streamed text, trimmed, and the stream ends with
+  `done`. The rest of the model output is read only for the usage (for at most 10 s more, and the model is capped by
+  `AI_MAX_OUTPUT_TOKENS`), so `output_tokens` is normally set and is `null` only if that read fails or stalls. A client that
+  is already gone just before the write gets no stored answer.
 - No question, answer, title or path is ever logged.
 
 ---

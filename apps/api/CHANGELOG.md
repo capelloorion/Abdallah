@@ -7,6 +7,28 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-07
+
+### Added
+
+- **`AI_MAX_OUTPUT_TOKENS`** (default `6000`; documented in both `.env.example`s, `docker-compose.yml` and
+  `docs/reference/environment-variables.md`) — the chat model is now built with an explicit output cap (sent to Azure
+  OpenAI as `max_completion_tokens`), so a runaway or injected answer cannot cost more than this many output tokens.
+  An invalid or non-positive value uses the default; a value above 16,000 is cut back to 16,000. The cap applies to each
+  model call (a retry can spend it again) and, for a reasoning model, includes its hidden reasoning tokens. The ask routes
+  still keep at most 20,000 characters of an answer.
+- **`team-assistant.ai.ask.outcomes`** metric — one count per ask from `/ask` and `/ask/stream`, by `route_class`
+  (`ask`, `ask_stream`) and `outcome` (`ok`, `cut`, `ai_unavailable`, `timeout`, `client_disconnected`, `error`); both
+  are checked against those fixed sets, so no id or content can become a series. One outcome per ask: a client that
+  leaves right after the real outcome is not counted a second time.
+
+### Changed
+
+- **A streamed answer cut at the 20,000-character bound now still reports usage.** `/ask/stream` stops sending and
+  storing text at the bound, but reads the model's stream to its end (bounded by `AI_MAX_OUTPUT_TOKENS`) so `done` carries
+  `input_tokens` / `output_tokens` and `messages.token_count` is set (for at most 10 s after the cut); a failure or stall after the cut keeps the cut answer and
+  loses only the usage. Before, such answers had `output_tokens: null` and a `NULL` `token_count`.
+
 ## [0.8.1] — 2026-10-07
 
 ### Changed

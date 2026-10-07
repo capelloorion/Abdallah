@@ -18,6 +18,11 @@ AUTH_MODES = ("managed_identity", "api_key")
 DEFAULT_API_VERSION = "2024-10-21"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_RETRIES = 2
+# Upper bound on one answer, in model output tokens. The ask routes keep at most 20,000
+# characters (roughly 5,000-7,000 tokens), so a cap in that range costs no answer worth storing.
+DEFAULT_MAX_OUTPUT_TOKENS = 6000
+# A configured value above this is cut back to it: the cap is a cost control, not a suggestion.
+MAX_OUTPUT_TOKENS_CEILING = 16000
 # text-embedding-3-small / ada-002 produce 1536-dimensional vectors; large = 3072.
 DEFAULT_EMBEDDING_DIMENSIONS = 1536
 
@@ -66,6 +71,7 @@ class AISettings:
     search_api_key: str | None
     request_timeout_seconds: float
     max_retries: int
+    max_output_tokens: int
     allow_text_to_sql: bool
 
     @property
@@ -115,6 +121,11 @@ def get_ai_settings() -> AISettings:
         max_retries = int(max_retries_raw) if max_retries_raw else DEFAULT_MAX_RETRIES
     except ValueError:
         max_retries = DEFAULT_MAX_RETRIES
+    max_output_raw = _env("AI_MAX_OUTPUT_TOKENS")
+    try:
+        max_output = int(max_output_raw) if max_output_raw else DEFAULT_MAX_OUTPUT_TOKENS
+    except ValueError:
+        max_output = DEFAULT_MAX_OUTPUT_TOKENS
     dims_raw = _env("AZURE_AI_EMBEDDING_DIMENSIONS")
     try:
         dims = int(dims_raw) if dims_raw else DEFAULT_EMBEDDING_DIMENSIONS
@@ -133,5 +144,10 @@ def get_ai_settings() -> AISettings:
         search_api_key=_env("AZURE_SEARCH_API_KEY"),
         request_timeout_seconds=_float_env("AI_REQUEST_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
         max_retries=max(0, max_retries),
+        max_output_tokens=(
+            min(max_output, MAX_OUTPUT_TOKENS_CEILING)
+            if max_output > 0
+            else DEFAULT_MAX_OUTPUT_TOKENS
+        ),
         allow_text_to_sql=_bool_env("AI_ALLOW_TEXT_TO_SQL"),
     )

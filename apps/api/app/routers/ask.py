@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.graph import Citation as RetrievedCitation
 from app.ai.graph import ask, build_graph
 from app.ai.streaming import sse, sse_response, stream_events
-from app.ai.telemetry import error_kind
+from app.ai.telemetry import error_kind, record_ask_outcome
 from app.ai.tools.retrieve import clean_title, fallback_title
 from app.db import get_session
 from app.errors import AIUnavailable, ApiError, ErrorBody, NotFound
@@ -57,6 +57,9 @@ MAX_ANSWER_CHARS = 20_000
 MAX_HISTORY_MESSAGE_CHARS = 4000
 # The whole retrieve + model round trip; the web BFF's hop timeout is longer (300 s).
 ASK_TIMEOUT_SECONDS = 60.0
+# After a streamed answer hits MAX_ANSWER_CHARS the model is read only for the token usage; give
+# it this long (within the overall deadline) before the usage is given up on.
+DRAIN_AFTER_CUT_SECONDS = 10.0
 MAX_CITATIONS = 20
 MAX_CITATION_PATH_CHARS = 500
 
@@ -246,21 +249,29 @@ async def ask_question(
     try:
         answer = await _run_ask(graph, body.question, history)
     except Exception as exc:  # noqa: BLE001 — any model/search failure is the same bounded 503
-        _log.warning("ask failed", outcome="error", error_kind=error_kind(exc))
+        kind = error_kind(exc)
+        _log.warning("ask failed", outcome="error", error_kind=kind)
+        record_ask_outcome("ask", "timeout" if kind == "timeout" else "ai_unavailable")
         raise AIUnavailable() from None
     text = _storable(answer.text)
     if not text:
         _log.warning("ask failed", outcome="empty_answer")
+        record_ask_outcome("ask", "ai_unavailable")
         raise AIUnavailable()
+    cut = len(answer.text.strip()) > MAX_ANSWER_CHARS
 
     citations = sanitize_citations(answer.citations)
-    stored = await repo.add_assistant_message(
-        session,
-        conversation,
-        text,
-        citations_json=_citations_json(citations),
-        token_count=answer.output_tokens,
-    )
+    try:
+        stored = await repo.add_assistant_message(
+            session,
+            conversation,
+            text,
+            citations_json=_citations_json(citations),
+            token_count=answer.output_tokens,
+        )
+    except Exception:
+        record_ask_outcome("ask", "error")  # counted, then the usual 500 (no content in it)
+        raise
     _log.info(
         "question answered",
         history=len(history),
@@ -268,6 +279,7 @@ async def ask_question(
         dropped_citations=len(answer.citations) - len(citations),
         output_tokens=answer.output_tokens,
     )
+    record_ask_outcome("ask", "cut" if cut else "ok")
     return AskResponse(message_id=stored.id, answer=text, citations=citations)
 
 
@@ -339,50 +351,78 @@ async def _stream_frames(
     shown = [c.model_dump() for c in citations]
     parts: list[str] = []
     size = 0
+    cut = False  # the answer reached MAX_ANSWER_CHARS: later tokens are read only for the usage
     input_tokens: int | None = None
     output_tokens: int | None = None
+    recorded = False
+
+    def record(outcome: str) -> None:
+        """One outcome per ask: a late disconnect after the real outcome is not counted again."""
+        nonlocal recorded
+        if not recorded:
+            recorded = True
+            record_ask_outcome("ask_stream", outcome)
+
     try:
         yield sse("sources", {"citations": shown, "count": retrieved})
         while True:
             try:
                 event, data = await _next_event(events, deadline)
             except StopAsyncIteration:
+                if cut:  # the answer is complete as far as we keep it; only the usage is lost
+                    _log.info("ask stream usage unavailable", outcome="no_terminal_frame")
+                    break
                 _log.warning("ask stream failed", outcome="no_terminal_frame")
+                record("error")
                 yield sse("error", {"error_kind": "error"})
                 return
             except Exception as exc:  # noqa: BLE001 — the frame carries a bounded kind only
                 kind = error_kind(exc)
+                if cut:
+                    _log.info("ask stream usage unavailable", outcome="error", error_kind=kind)
+                    break
                 _log.warning("ask stream failed", outcome="error", error_kind=kind)
+                record("timeout" if kind == "timeout" else "error")
                 yield sse("error", {"error_kind": kind})
                 return
             if event == "token":
+                if cut:
+                    continue  # past the cap: keep reading (bounded by max output tokens) for usage
                 # Valid UTF-8 (a lone surrogate would break the encoder mid-stream), then the cap.
                 text = str(data.get("text", "")).encode("utf-8", "replace").decode("utf-8")
                 room = MAX_ANSWER_CHARS - size
-                capped = len(text) > room
+                cut = len(text) > room
+                if cut:  # the usage is read for at most a few more seconds, never the full deadline
+                    deadline = min(
+                        deadline, asyncio.get_running_loop().time() + DRAIN_AFTER_CUT_SECONDS
+                    )
                 text = text[:room]
                 size += len(text)
                 parts.append(text)
                 if text:
                     yield sse("token", {"text": text})
-                if capped:  # past the cap: stop here, so the stored text is what was streamed
-                    break
             elif event == "done":
                 input_tokens, output_tokens = data.get("input_tokens"), data.get("output_tokens")
                 break
             elif event == "error":
                 kind = _bounded_kind(data.get("error_kind"))
+                if cut:
+                    _log.info("ask stream usage unavailable", outcome="error", error_kind=kind)
+                    break
                 _log.warning("ask stream failed", outcome="error", error_kind=kind)
+                record("timeout" if kind == "timeout" else "error")
                 yield sse("error", {"error_kind": kind})
                 return
 
         text = _storable("".join(parts))
         if not text:
             _log.warning("ask stream failed", outcome="empty_answer")
+            record("error")
             yield sse("error", {"error_kind": "error"})
             return
         if await is_disconnected():  # the client is gone: do not store an answer it never got
             _log.info("ask stream ended by the client", outcome="client_disconnected")
+            record("client_disconnected")
             return
         try:
             await repo.add_assistant_message(
@@ -394,6 +434,7 @@ async def _stream_frames(
             )
         except Exception as exc:  # noqa: BLE001 — a failed write is a failed answer, never `done`
             _log.error("ask stream failed", outcome="store_failed", kind=type(exc).__name__)
+            record("error")
             yield sse("error", {"error_kind": "error"})
             return
         _log.info(
@@ -403,12 +444,14 @@ async def _stream_frames(
             dropped_citations=raw_citations - len(citations),
             output_tokens=output_tokens,
         )
+        record("cut" if cut else "ok")
         yield sse(
             "done",
             {"citations": shown, "input_tokens": input_tokens, "output_tokens": output_tokens},
         )
     except asyncio.CancelledError, GeneratorExit:
         _log.info("ask stream ended by the client", outcome="client_disconnected")
+        record("client_disconnected")
         raise
     finally:
         await _close(events)
@@ -456,15 +499,15 @@ async def ask_question_stream(
         raise
     except Exception as exc:  # noqa: BLE001 — before the first frame this is a plain JSON 503
         await _close(events)
-        _log.warning("ask stream failed", outcome="error", error_kind=error_kind(exc))
+        kind = error_kind(exc)
+        _log.warning("ask stream failed", outcome="error", error_kind=kind)
+        record_ask_outcome("ask_stream", "timeout" if kind == "timeout" else "ai_unavailable")
         raise AIUnavailable() from None
     if event != "sources":  # an `error` frame (retrieval failed) or anything unexpected
         await _close(events)
-        _log.warning(
-            "ask stream failed",
-            outcome="error",
-            error_kind=_bounded_kind(data.get("error_kind")) if event == "error" else "protocol",
-        )
+        kind = _bounded_kind(data.get("error_kind")) if event == "error" else "protocol"
+        _log.warning("ask stream failed", outcome="error", error_kind=kind)
+        record_ask_outcome("ask_stream", "timeout" if kind == "timeout" else "ai_unavailable")
         raise AIUnavailable()
 
     retrieved_citations = data.get("citations", [])
