@@ -42,7 +42,8 @@ def test_eval_case(case: dict) -> None:
         for turn in case.get("history", [])
     ]
     answer = asyncio.run(ask(graph, case["question"], history=history))
-    assert retriever.calls and retriever.calls[0][0] == case["question"]
+    # What is searched: the question, or the previous user turn + the question for a follow-up.
+    assert retriever.calls and retriever.calls[0][0] == case.get("expect_query", case["question"])
     for needle in case["expect_contains"]:
         assert needle.lower() in answer.text.lower(), (case["id"], answer.text)
     assert answer.citations == case["expect_citations"]

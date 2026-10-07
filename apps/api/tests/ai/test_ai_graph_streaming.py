@@ -6,10 +6,18 @@ import asyncio
 import json
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 import app.ai.tools.retrieve as retrieve_mod
-from app.ai.graph import ask, build_graph, citations_for, format_context, last_user_text
+from app.ai.graph import (
+    MAX_PREVIOUS_TURN_CHARS,
+    ask,
+    build_graph,
+    citations_for,
+    format_context,
+    last_user_text,
+    retrieval_query,
+)
 from app.ai.streaming import sse, sse_response, stream_answer
 from app.ai.tools.retrieve import NullRetriever
 from tests.ai.fakes import FakeRetriever, fake_chat_model
@@ -219,3 +227,89 @@ def test_no_retrieval_means_empty_citations_in_both_frames() -> None:
     events = _collect(asyncio.run(run()))
     assert events[0] == ("sources", {"citations": [], "count": 0})
     assert events[-1][1]["citations"] == []
+
+
+# ---- follow-up-aware retrieval (roadmap api:2.3, decision Q3) ---------------------------------
+
+
+def test_retrieval_query_is_the_question_alone_without_an_earlier_user_turn() -> None:
+    assert retrieval_query([]) == ""
+    assert retrieval_query([HumanMessage(content="which port?")]) == "which port?"
+    # An assistant turn alone is not a user turn.
+    assert retrieval_query([AIMessage(content="hello"), HumanMessage(content="which port?")]) == (
+        "which port?"
+    )
+
+
+def test_retrieval_query_adds_the_previous_user_turn_never_the_assistants_answer() -> None:
+    messages = [
+        HumanMessage(content="How does tracing work?"),
+        AIMessage(content="ASSISTANT-ANSWER mentions many things"),
+        HumanMessage(content="And on the api side?"),
+    ]
+    assert retrieval_query(messages) == "How does tracing work?\nAnd on the api side?"
+
+
+def test_retrieval_query_uses_only_the_turn_right_before_the_question() -> None:
+    messages = [
+        HumanMessage(content="oldest"),
+        HumanMessage(content="previous"),
+        HumanMessage(content="now"),
+    ]
+    assert retrieval_query(messages) == "previous\nnow"
+
+
+def test_retrieval_query_cuts_a_long_previous_turn_but_not_the_question() -> None:
+    long_turn = "x" * (MAX_PREVIOUS_TURN_CHARS + 500)
+    query = retrieval_query([HumanMessage(content=long_turn), HumanMessage(content="and?")])
+    assert query == "x" * MAX_PREVIOUS_TURN_CHARS + "\nand?"
+
+
+def test_retrieval_query_with_only_a_blank_earlier_turn_is_the_question_alone() -> None:
+    assert retrieval_query([HumanMessage(content="  \n"), HumanMessage(content="q")]) == "q"
+
+
+def test_retrieval_query_looks_past_a_blank_turn_to_an_older_one() -> None:
+    messages = [HumanMessage(content="topic"), HumanMessage(content=" "), HumanMessage(content="q")]
+    assert retrieval_query(messages) == "topic\nq"
+
+
+def test_a_question_asked_again_after_a_failed_answer_is_not_doubled() -> None:
+    # The failed question stays stored with no answer, so a retry sees it as the previous turn.
+    messages = [
+        HumanMessage(content="How does tracing work?"),
+        AIMessage(content="It adopts ids."),
+        HumanMessage(content="And on the api side?"),  # asked, answer failed
+        HumanMessage(content="And on the api side? "),  # asked again
+    ]
+    assert retrieval_query(messages) == "How does tracing work?\nAnd on the api side? "
+
+
+def test_retrieval_query_reads_the_text_parts_of_block_content() -> None:
+    blocks = [{"type": "text", "text": "How does "}, {"type": "text", "text": "tracing work?"}]
+    query = retrieval_query([HumanMessage(content=blocks), HumanMessage(content="and the api?")])
+    assert query == "How does tracing work?\nand the api?"
+
+
+def test_a_follow_up_is_retrieved_with_the_previous_user_turn() -> None:
+    retriever = FakeRetriever(CHUNKS)
+    graph = build_graph(
+        chat_model=fake_chat_model("ok"), retriever=retriever, top_k=2, deployment_label="test"
+    )
+    history = [HumanMessage(content="How does tracing work?"), AIMessage(content="It adopts ids.")]
+    asyncio.run(ask(graph, "And on the api side?", history=history))
+    assert retriever.calls == [("How does tracing work?\nAnd on the api side?", 2)]
+
+
+def test_the_streaming_path_retrieves_the_same_query() -> None:
+    retriever = FakeRetriever(CHUNKS)
+    graph = build_graph(
+        chat_model=fake_chat_model("ok"), retriever=retriever, top_k=2, deployment_label="test"
+    )
+    history = [HumanMessage(content="How does tracing work?")]
+
+    async def run() -> None:
+        [f async for f in stream_answer(graph, "And the api?", history=history)]
+
+    asyncio.run(run())
+    assert retriever.calls == [("How does tracing work?\nAnd the api?", 2)]

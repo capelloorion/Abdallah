@@ -782,3 +782,27 @@ def test_a_lone_surrogate_in_a_citation_title_does_not_break_the_answer(setup: A
     assert res.status_code == 200
     session.added[1].citations.encode("utf-8")  # storable
     res.text.encode("utf-8")
+
+
+# ---- follow-up-aware retrieval (roadmap api:2.3) ----------------------------------------------
+
+
+def test_a_follow_up_is_retrieved_with_the_previous_stored_user_turn(setup: Any) -> None:
+    conversation = _conversation("Tracing")
+    history = [
+        _stored(conversation, "user", "How does trace_id propagation work?", 1),
+        _stored(conversation, "assistant", "ASSISTANT-ANSWER about headers [1].", 2),
+    ]
+    retriever = FakeRetriever([CHUNK])
+    session = FakeSession(found=conversation, history=history)
+    _ask(setup(session, retriever=retriever), conversation, "And on the api side?")
+    assert [q for q, _ in retriever.calls] == [
+        "How does trace_id propagation work?\nAnd on the api side?"
+    ]
+
+
+def test_the_first_question_of_a_conversation_is_retrieved_as_it_is(setup: Any) -> None:
+    conversation = _conversation()
+    retriever = FakeRetriever([CHUNK])
+    _ask(setup(FakeSession(found=conversation), retriever=retriever), conversation, "Which port?")
+    assert [q for q, _ in retriever.calls] == ["Which port?"]

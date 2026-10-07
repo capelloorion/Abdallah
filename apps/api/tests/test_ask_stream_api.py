@@ -697,3 +697,19 @@ def test_a_real_asgi_disconnect_stops_the_model_and_stores_no_answer(
     )
     assert [m.role for m in session.added] == ["user"]
     assert model.closed
+
+
+def test_a_streamed_follow_up_is_retrieved_with_the_previous_stored_user_turn(
+    stream_setup: Any,
+) -> None:
+    conversation = _conversation("Tracing")
+    history = [
+        _stored(conversation, "user", "How does trace_id propagation work?", 1),
+        _stored(conversation, "assistant", "ASSISTANT-ANSWER about headers [1].", 2),
+    ]
+    retriever = FakeRetriever([CHUNK])
+    session = ClosingSession(found=conversation, history=history)
+    _post(stream_setup(session, retriever=retriever), conversation, "And on the api side?")
+    assert [q for q, _ in retriever.calls] == [
+        "How does trace_id propagation work?\nAnd on the api side?"
+    ]

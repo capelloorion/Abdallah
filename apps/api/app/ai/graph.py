@@ -63,6 +63,32 @@ def last_user_text(messages: list[AnyMessage]) -> str:
     return ""
 
 
+# A follow-up is searched together with the turn before it; that turn is cut to this many
+# characters so the query stays small whatever was written earlier (a cost and injection bound).
+MAX_PREVIOUS_TURN_CHARS = 1000
+
+
+def retrieval_query(messages: list[AnyMessage]) -> str:
+    """What to search for: the new question, preceded by the previous *user* turn when there is one.
+
+    A follow-up such as "And on the api side?" means nothing alone; searched together with the turn
+    before it, it finds the conversation's topic (decision Q3: no extra model call, no extra node).
+    Only user turns are used — never the assistant's earlier answer, which could echo anything.
+    A blank turn, or the same question asked again after a failed answer (the failed question stays
+    stored), adds nothing, so the search looks one user turn further back.
+    The query is search input only: it is never logged (rule 70).
+    """
+    question = last_user_text(messages)
+    if not question:
+        return ""
+    user_turns = [m for m in messages if isinstance(m, HumanMessage)]
+    for message in reversed(user_turns[:-1]):
+        previous = _message_text(message).strip()
+        if previous and previous != question.strip():
+            return f"{previous[:MAX_PREVIOUS_TURN_CHARS]}\n{question}"
+    return question
+
+
 def _message_text(message: Any) -> str:
     content = getattr(message, "content", "")
     if isinstance(content, str):
@@ -95,7 +121,7 @@ def build_graph(
     bound_tools = list(tools or [])
 
     async def retrieve(state: GraphState) -> GraphState:
-        question = last_user_text(state.get("messages", []))
+        question = retrieval_query(state.get("messages", []))
         active = retriever if retriever is not None else get_default_retriever()
         started = time.perf_counter()
         try:

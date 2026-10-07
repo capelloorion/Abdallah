@@ -61,8 +61,13 @@ report token usage on streamed answers too.
 **`graph.py`.** `build_graph(chat_model=None, retriever=None, tools=None, top_k=5)` compiles a
 `StateGraph` over a typed state (`messages` with the `add_messages` reducer, `context`):
 
-1. `retrieve` — embeds the latest user turn and queries the retriever (deterministically, every
-   turn — grounding never depends on the model choosing a tool); records retrieval telemetry.
+1. `retrieve` — builds the search query with `retrieval_query()` and queries the retriever
+   (deterministically, every turn — grounding never depends on the model choosing a tool);
+   records retrieval telemetry. The query is the latest user turn, preceded by the **previous user
+   turn** (cut to 1,000 characters) when there is one, so a follow-up such as "And on the api side?"
+   finds the conversation's topic (decision Q3: no extra model call, no extra node; the assistant's
+   earlier answers are never used; a blank turn or a repeat of the same question is skipped). The query is
+   search input only and is never logged.
 2. `answer` — renders `prompts/system.md` with the numbered context, calls the model inside
    `model_call_span()`, appends the `AIMessage`.
 3. optional `tools` — when tools are passed, the model is bound to them and a `ToolNode` loop

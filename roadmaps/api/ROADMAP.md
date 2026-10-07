@@ -33,6 +33,7 @@ human steps listed on each item.
 - **Q4** — corpus = an explicit allow-list of `docs/**/*.md`, default deny; `docs/security/` and design drafts excluded unless opted in.
 - **Q3** — a follow-up retrieves on the previous user turn plus the new question (no extra model call). **Q5** — a question over 4,000 characters is `413 payload_too_large`. **Q6** — `messages.token_count` is the output (completion) tokens. **Q2** — the corpus is copied from `docs/` into `apps/api` at build time. These four are the recommended defaults, accepted in bulk; each can be changed later.
 - **Accepted:** the shared-conversations threat model (R1–R6) and the notice wording shipped in web 4.1; ADR-0014 is `Accepted`. **Not yet accepted:** the ingest residual risks R1–R7 and ADR-0015 (to confirm before 4.2 ships).
+  **Re-planned (2026-10-06, `/plan-roadmap api`):** Q1–Q6 are all decided (above), so 2.3 and 4.3 are unblocked on the decision side (4.3 still waits for 4.2). 2.2 and 3.1 are done. New Phase 5 items 5.2–5.8 collect what those items and the threat models left open. 4.2 still waits for the team's acceptance of the ingest risks R1–R7 and ADR-0015.
 
 ## Phase 1 — Conversations (F2)
 
@@ -192,18 +193,29 @@ human steps listed on each item.
 
 ### 2.3 — Follow-up-aware retrieval
 
-- **status:** blocked
+- **status:** done
 - **depends_on:** [2.2]
 - **layers:** [ai]
 - **acceptance:**
   - a follow-up such as "And on the api side?" retrieves documents relevant to the conversation, not only to the last sentence, using the approach chosen in Q3
   - the eval harness has a follow-up case that fails with last-question-only retrieval
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **467 passed** (web: 500 passed, unchanged); the new cases are in `apps/api/tests/ai/test_ai_graph_streaming.py` (`retrieval_query` edge cases, graph and stream paths), `tests/evals/cases.json` (`follow-up-is-searched-with-the-previous-user-turn`; the harness now takes an `expect_query` per case), `tests/test_ask_api.py` and `tests/test_ask_stream_api.py` (the stored previous user turn reaches the retriever)
+  - the follow-up eval case fails with last-question-only retrieval: temporarily change `retrieve` in `apps/api/app/ai/graph.py` to `question = last_user_text(...)` and `uv run --directory apps/api pytest tests/evals -q` fails on that case (checked here: also on the graph, ask and stream tests); revert it
+  - `just openapi` then `git status` — no change (no request or response shape changed)
+  - needs the dev setup from 2.2/3.1 (migration applied, `AZURE_AI_*` / `AZURE_SEARCH_*`, a populated index): `POST /v1/conversations/$ID/ask` with `{"question":"How does trace_id propagation work?"}`, then `{"question":"And on the api side?"}` → the second answer cites documents about trace ids in the api, not unrelated ones; asking the second question first in a new conversation gives a vaguer answer
+  - logs: the query never appears (only `retrieval` lines with outcome, duration and hit count)
 - **needs_human:**
-  - the team answers Q3 (a condense step adds a model call and a graph node)
+  - judge answer quality on a few real conversations once an index is populated (one retrieval query now holds two turns, so a sharp change of topic can pull in the old topic's documents; that is the accepted cost of Q3)
+  - the shared-conversations threat model (A1/A5, team-owned) does not yet say that the text sent to Search and the embeddings deployment can include the previous user's question; add a line when the team next edits it
 - **notes:**
   - 2026-10-06 — blocked: Q3 undecided. The `retrieve` node searches on the last user message only (`app/ai/graph.py`), so the wireframe's own follow-up example would retrieve nothing relevant.
+  - 2026-10-06 — re-planned: unblocked. Q3 was decided on 2026-10-06 (previous turn plus the question). 2.2 is done: the stored history reaches the graph as the `messages` list, so the `retrieve` node can build its query from the last two user turns without a new node or model call. Keep the query bounded (the 4,000-character question cap applies to the new question; cut the previous turn). Retrieval input must never be logged.
+  - 2026-10-07 — started by Claude.
+  - 2026-10-07 — implemented; awaiting test by the developer. Files: `apps/api/app/ai/graph.py` (`retrieval_query()`, `MAX_PREVIOUS_TURN_CHARS`; the `retrieve` node uses it), tests and evals, `docs/architecture/ai.md`, `apps/api/CHANGELOG.md`, version 0.8.0 → 0.8.1 (`pyproject.toml`, `uv.lock` by hand on lock revision 3; a PATCH because no request or response shape changed). Nothing applied, no database or Azure service contacted. Both `/ask` and `/ask/stream` get it because they share the graph.
+  - 2026-10-07 — review run: `code-reviewer` (no blockers). Fixed from it: a retry after a failed answer no longer doubles the question (the failed question stays stored, so a repeat is skipped), a blank earlier turn no longer stops the search for context, and block-style content is read with `_message_text`. Not run: `security-reviewer` (no BFF, env, external HTTP, DB or tool change). Mutation-checked: last-question-only retrieval fails the follow-up eval case and the graph, ask and stream tests.
+  - 2026-10-07 — decisions taken here: only user turns are used (never the assistant's answer), the previous turn is cut to 1,000 characters, and the query is never logged. The query can now carry another user's earlier question to Search and Foundry (conversations are shared, ADR-0014) — bounded to which documents are retrieved; it cannot reach the system role.
+  - 2026-10-07 — confirmed by the developer (done). Judging answer quality on real conversations (needs_human above) is still open.
 
 ## Phase 3 — Streaming
 
@@ -289,7 +301,7 @@ human steps listed on each item.
 
 ### 4.3 — Corpus inside the deployed api image
 
-- **status:** blocked
+- **status:** todo
 - **depends_on:** [4.2]
 - **layers:** [infra, docs]
 - **acceptance:**
@@ -298,9 +310,10 @@ human steps listed on each item.
 - **how_to_test:**
   - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
 - **needs_human:**
-  - the team answers Q2
+  - none to decide: Q2 is decided (copy `docs/` into `apps/api` before the build); a developer runs the first CI and image build
 - **notes:**
   - 2026-10-06 — blocked: Q2 undecided. `docs/` is outside the api build context (`context: ./apps/api`, Dockerfile `COPY . /app`), so the draft's "bake into the image" cannot work as written. This is a Dockerfile/CI change, not Bicep.
+  - 2026-10-06 — re-planned: unblocked on the decision side. Q2 was decided on 2026-10-06 (copy `docs/` into `apps/api` before the build). Still depends on 4.2 (the K1 allow-list and the loader it defines). Carry the Phase 5 note: allow-list build context, no symlinks, CI listing and secret scan.
 
 ## Phase 5 — Hardening
 
@@ -322,3 +335,113 @@ human steps listed on each item.
 - **notes:**
   - 2026-10-06 — planned. Must land before prod scales out: `main.prod.bicepparam` sets `apiReplicas` min 2.
   - 2026-10-06 — from the ingest threat model (api:4.1): a persisted cooldown, a lease that stores the corpus version and refuses older runs (rolling-deploy downgrade), lease expiry, a "started without finished" alert; the endpoint stays off in any environment with more than one replica until this ships; note K7 (index swap) for rebuild windows.
+
+### 5.2 — Request-size, rate and stream limits on the ask routes
+
+- **status:** todo
+- **depends_on:** [3.1]
+- **layers:** [endpoint]
+- **acceptance:**
+  - a request body over a fixed size (a few times the 4,000-character question limit) is rejected with `413 payload_too_large` before it is buffered and parsed; the exact 4,000-character check stays in the handler
+  - a per-client rate limit on `POST /v1/conversations`, `/ask` and `/ask/stream` returns `429 rate_limited` with the `{error, trace_id}` body; the limits are env-configurable with safe defaults and are off in tests unless set
+  - the number of concurrent streams is capped (a request over the cap gets `429 rate_limited`), and a stream whose client stops reading is ended after a write-stall timeout, releasing the model run and the DB session
+  - no new limit logs content; counts and outcomes only
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - decide the numbers (body size, requests per minute, concurrent streams) and whether the limit also belongs at the Container Apps ingress or the web BFF (threat model P2/P4; the infra roadmap would own an ingress setting)
+- **notes:**
+  - 2026-10-06 — planned by `/plan-roadmap api` from the open points left by api 1.2, 2.2 and 3.1 (threat model D2/D4/A7, risk R2 accepted until this ships). The 60 s stream deadline covers waits for the model, not writes to the client. A web counterpart (rate limit at the BFF, request timeouts) belongs in the web roadmap.
+
+### 5.3 — Cap the model output and record ask outcomes
+
+- **status:** todo
+- **depends_on:** [3.1]
+- **layers:** [ai]
+- **acceptance:**
+  - the chat model is built with an explicit output-token cap (`AI_MAX_OUTPUT_TOKENS`, documented in `.env.example` and `docs/reference/environment-variables.md`, with a default in line with the 20,000-character answer bound)
+  - one bounded metric counts ask outcomes (`ok`, `ai_unavailable`, `timeout`, `client_disconnected`, `cut`) with `route_class` and no ids or content; both `/ask` and `/ask/stream` record it
+  - an answer cut at the character bound still reports usage when the model has reported it
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - choose the cap with the model owner (a low cap truncates real answers); confirm what the Foundry deployment reports as usage
+- **notes:**
+  - 2026-10-06 — planned from api 2.2 and 3.1: the answer is only cut after it is generated, and an answer stopped at the cap loses `output_tokens` (so `token_count` is `NULL` for exactly the most expensive answers). Cardinality rules: `.claude/rules/60-observability.md`.
+
+### 5.4 — Say which retrieved chunks each citation covers
+
+- **status:** todo
+- **depends_on:** [3.1]
+- **layers:** [ai, endpoint]
+- **acceptance:**
+  - each citation carries `chunks: [n, …]`, the numbers of the retrieved chunks (the `[n]` markers in the answer) that came from that document, in `sources`, `done` and the JSON answer
+  - the value is validated before it is stored (integers within the retrieved count) and read back by `GET /v1/conversations/{id}` without breaking stored rows that lack it
+  - OpenAPI and the web's `api-types.ts` are regenerated; the old shape stays readable
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the web UI needs a follow-up item to show the numbers against the Sources block (web roadmap; web 2.1 left it unnumbered on purpose)
+- **notes:**
+  - 2026-10-06 — planned from the web 2.1 notes: the inline `[n]` markers index retrieved chunks, but citations are unique documents, so the numbers cannot be shown against the Sources block. A backward-compatible addition: MINOR bump.
+
+### 5.5 — Decide where retrieved text goes in the prompt
+
+- **status:** todo
+- **depends_on:** [2.2]
+- **layers:** [ai, docs]
+- **acceptance:**
+  - ADR-0009 is amended (or a new ADR written) with an explicit decision: retrieved text stays in the `{context}` slot of the system prompt with the "context is data" rule, or moves to a human/tool-role message
+  - if it moves, `graph.py`, `prompts/system.md`, the eval cases and `docs/architecture/ai.md` are updated and `.claude/rules/70-ai.md` matches; if it stays, rule 70 states the accepted exception
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the team decides; the security review of api 2.2 flagged that rule 70 and the review checklist say retrieved text must never reach the model as a system message, while the template graph does exactly that
+- **notes:**
+  - 2026-10-06 — planned from the api 2.2 security review (finding on `app/ai/graph.py`). Propose the ADR with the `write-adr` skill; do not change the graph before the decision.
+
+### 5.6 — Page the conversation list
+
+- **status:** todo
+- **depends_on:** [1.2]
+- **layers:** [endpoint]
+- **acceptance:**
+  - `GET /v1/conversations` accepts an opaque `cursor` (built from `updated_at` and `id`) and returns `next_cursor` (or `null`); the first page and `limit` behave as today
+  - a malformed or tampered cursor returns `422 validation_error`; ordering stays stable while conversations are added or updated between pages
+  - OpenAPI and `api-types.ts` regenerated; existing clients that ignore `next_cursor` keep working
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the web needs a follow-up item to load more than the newest 50 chats (web roadmap)
+- **notes:**
+  - 2026-10-06 — planned from the api 1.2 notes (a flood of conversations can push real ones off the list; threat model P2). Pair with 5.2.
+
+### 5.7 — Operator purge runbook for stored conversations
+
+- **status:** todo
+- **depends_on:** []
+- **layers:** [docs]
+- **acceptance:**
+  - `docs/operations/runbooks/` has a runbook (via the `runbook-writer` skill) for removing a conversation or message from Azure SQL by an operator: who may do it, the exact SQL with bound values, how to record what was removed and who asked (counts, never content), and the follow-up for a pasted credential (rotate it; deleting a row does not undo the exposure)
+  - the runbook states the retention decision and backup retention once they are known
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the team names who owns erasure requests, picks a retention period (or "forever") and learns the platform's real backup retention (threat model R3, P3, Q1/Q4)
+- **notes:**
+  - 2026-10-06 — planned from the shared-conversations threat model (P3). Documentation only; there is deliberately no delete endpoint (ADR-0014).
+
+### 5.8 — Optional: warn on secrets in questions
+
+- **status:** todo
+- **depends_on:** [2.2]
+- **layers:** [endpoint]
+- **acceptance:**
+  - when a question matches a small set of secret patterns (`AKIA…`, `sk-…`, `ghp_…`, `eyJ…` tokens, private-key headers), the api rejects it with a distinct `422` code (or accepts it with a warning field, as decided) before anything is stored or sent to the model
+  - the matched text is never logged or echoed; only the pattern class is counted
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - the team decides whether to build this at all (threat model P5 is optional) and whether to reject or warn; false positives on pasted code are likely
+- **notes:**
+  - 2026-10-06 — planned from the shared-conversations threat model (P5, I3/A6). Leave `todo` until the decision; do not start without it.

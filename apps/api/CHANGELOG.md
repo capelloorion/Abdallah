@@ -7,6 +7,21 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-07
+
+### Changed
+
+- **Follow-up-aware retrieval** (roadmap api:2.3, decision Q3). The `retrieve` node now searches for the previous
+  *user* turn (cut to 1,000 characters) followed by the new question, instead of the new question alone, so a
+  follow-up such as "And on the api side?" retrieves documents about the conversation's topic. Applies to
+  `/v1/conversations/{id}/ask` and `/ask/stream`. No extra model call and no new graph node; the assistant's earlier
+  answers are never part of the query, and the query is never logged; a blank turn, or the same question asked
+  again after a failed answer, is skipped in favour of the turn before it. The query can be up to 1,000 characters
+  longer than before (one embedding and one search call, as before). The first question of a conversation is
+  searched exactly as before. The request and response shapes are unchanged.
+- `app.ai.graph.retrieval_query()` builds the query; the eval harness accepts an `expect_query` per case and has
+  a follow-up case that fails with last-question-only retrieval.
+
 ## [0.8.0] — 2026-10-06
 
 ### Added
