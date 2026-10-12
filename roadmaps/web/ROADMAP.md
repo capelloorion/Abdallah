@@ -88,6 +88,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - 2026-10-06 — for web 2.1 (client): `askStream` must read the body of a non-OK `text/event-stream` response (the unreachable-api `502` carries an `error` frame whose `error_kind` is otherwise lost) and the JSON `{error, trace_id}` of a pre-stream error; it must read `citations` (the template client still reads `sources`); and it must treat a stream that ends without `done` or `error` as a failure — a stream cut after headers has no terminal frame, so the partial answer must never be shown as complete. Key on the status class, not on the exact error code.
   - 2026-10-06 — NOT done here (threat model P2/P4/P6): a rate limit and a concurrent-stream cap on this cost-bearing route (a model call per request, up to 300 s per stream — High until P2, acceptable only on the internal network), a byte cap on the api's error replies, CSP and security headers, a stream-end log/metric (outcome, duration, disconnect — `withBff` measures only time to headers). The template's older `/api/v1/assistant/ask[/stream]` routes have none of these caps either; web 3.2 retires them. `MOCK_UPSTREAM` is refused only when `APP_ENV=prod`, so make sure it is never set in any deployed environment (nothing sets it today).
   - 2026-10-06 — confirmed by the developer (done). The real-api checks and the 400-vs-422 choice (needs_human above) are still open.
+  - 2026-10-12 — the `400 bad_request` for an invalid question recorded above was changed to `422 validation_error` by web 3.1, to match the real api (the open 400-vs-422 question under needs_human is closed that way; the developer can veto it).
 
 ### 2.1 — Citations and error details in the chat client and thread
 
@@ -225,7 +226,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 3.1 — Switch to the generated api contract and run against the real api
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [2.4, api:1.2, api:3.1]
 - **layers:** [bff, ui]
 - **acceptance:**
@@ -233,12 +234,22 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - with `MOCK_UPSTREAM` off, `/chat` works against the local api: create, list, reopen, and a streamed answer with citations
   - the mock branches in the BFF routes stay available behind `MOCK_UPSTREAM` for demos (they are not deleted)
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **519 passed** (new: `src/lib/contract.test.ts`, `src/lib/bff-json.test.ts`, and the pass-through and shape cases in `src/app/api/v1/conversations/ask-stream.test.ts`)
+  - `just openapi` then `git status` — no change to `docs/reference/openapi.json` or `src/lib/api-types.ts` (the contract is current)
+  - `git grep -n "TODO(contract)" -- apps/web` finds nothing
+  - mock mode still works: `MOCK_UPSTREAM=true` in `apps/web/.env.local`, `pnpm -C apps/web dev`, open http://localhost:3000/chat — list, create, reopen and a streamed answer with sources, as before
+  - **against the real api** (needs the human steps below): in `apps/web/.env.local` set `MOCK_UPSTREAM=false` (or remove it) and `API_BASE_URL=http://localhost:8000`; in one terminal `uv run --directory apps/api uvicorn app.main:app --port 8000`, in another `pnpm -C apps/web dev`; open `/chat` → the list loads (empty on a new database), **+ New chat** creates a conversation, asking streams a grounded answer with a Sources block, reopening shows the stored messages, and a reload keeps them
+  - a question the api rejects shows the same red line either way: ask an empty-after-trim question through `Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/v1/conversations/<id>/ask/stream -ContentType application/json -Body '{"question":"   "}'` → `422 validation_error` (it was `400` before)
 - **needs_human:**
   - the dev database has the migration applied (`api:1.1`), `apps/api/.env` has the `AZURE_AI_*` / `AZURE_SEARCH_*` values, and the index has been ingested (`api:4.2`) — otherwise answers cannot be grounded
   - run the manual Playwright smoke against the real api
+  - confirm the change of the invalid-question status from `400 bad_request` to `422 validation_error` (it now matches the real api and the other conversation routes); say so if you prefer `400`
 - **notes:**
   - 2026-10-06 — planned. `api:2.2` is covered because `api:3.1` depends on it.
+  - 2026-10-12 — started by Claude
+  - 2026-10-12 — implemented; awaiting test. Most of the acceptance was already true: the fixtures, `ConversationList` and `conversations-client` were typed from the generated `api-types.ts` since web 1.1/2.x, `just openapi` produces no change, and there were no `TODO(contract)` markers left in code. What this item added: the generated `AskRequest` / `ConversationCreate` / `ErrorBody` types in the BFF routes, `ask-frames.ts` for the stream frames, `contract.test.ts`, the pass-through tests for the api's `429`/`413`/`503`, and the `422` alignment. Files: `apps/web/src/lib/{ask-frames,bff-json}.ts`, `apps/web/src/lib/{contract,bff-json}.test.ts`, `apps/web/src/mocks/{conversations.ts,README.md}`, the two BFF routes and `ask-stream.test.ts`, `docs/reference/http-api.md`, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.10.0 → 0.11.0. Review run: `code-reviewer` (no blockers; fixed: docs that still said `400`, no test for the api's `429`/`413`, field names not tied to the api description, `extra` able to overwrite `error`).
+  - 2026-10-12 — NOT verified here: `/chat` against the real api (needs the migration applied, `AZURE_AI_*` / `AZURE_SEARCH_*` in `apps/api/.env`, and an ingested index) — that is the manual step above. The api's OpenAPI types the ask-stream error bodies as `text/event-stream` although they are JSON (an api quirk); the BFF does not use that generated type to read errors.
+  - 2026-10-12 — confirmed by the developer (done). The run against the real api (migration, Azure settings, an ingested index) and the Playwright smoke are still open (needs_human above).
 
 ### 3.2 — Retire the template's `assistant` example
 

@@ -191,15 +191,18 @@ describe('what the BFF checks before it forwards anything', () => {
     ['an empty body', ''],
     ['malformed JSON', '{"question": "hi'],
     ['a lone surrogate', '{"question":"bad \\ud800 text"}'],
-  ])('rejects %s with 400 bad_request and never calls the api', async (_label, body) => {
-    const fetchSpy = noFetch();
-    const res = await ask(body);
-    expect(res.status).toBe(400);
-    const parsed = await res.json();
-    expect(parsed.error).toBe('bad_request');
-    expect(parsed.trace_id).toMatch(TRACE);
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+  ])(
+    'rejects %s with 422 validation_error, as the api does, and never calls the api',
+    async (_label, body) => {
+      const fetchSpy = noFetch();
+      const res = await ask(body);
+      expect(res.status).toBe(422);
+      const parsed = await res.json();
+      expect(parsed.error).toBe('validation_error');
+      expect(parsed.trace_id).toMatch(TRACE);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it('counts characters, not UTF-16 units: 4000 emoji pass, one more is 413', async () => {
     process.env.MOCK_UPSTREAM = 'true';
@@ -462,6 +465,32 @@ describe('review follow-ups', () => {
     const res = await ask(q('hi'));
     expect(res.status).toBe(502);
     expect((await res.json()).error).toBe('upstream_error');
+  });
+
+  it.each([
+    ['429 rate_limited (the api stream cap)', 429, 'rate_limited'],
+    ['413 payload_too_large (the api body or question limit)', 413, 'payload_too_large'],
+    ['503 ai_unavailable', 503, 'ai_unavailable'],
+    ['404 not_found', 404, 'not_found'],
+    ['422 validation_error', 422, 'validation_error'],
+  ])("passes the api's %s through with its status and code", async (_label, status, code) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: code, trace_id: INBOUND }), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    const res = await ask(q('hi'), { headers: { [TRACE_HEADER]: INBOUND } });
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: code, trace_id: INBOUND });
+  });
+
+  it("answers an invalid question with exactly the api's error shape", async () => {
+    noFetch();
+    const res = await ask(q(''));
+    expect(res.status).toBe(422);
+    expect(Object.keys(await res.json()).sort()).toEqual(['error', 'trace_id']);
   });
 
   it('relays only error and trace_id from an api error body', async () => {

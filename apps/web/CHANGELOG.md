@@ -7,6 +7,20 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-12
+
+### Changed
+
+- **An invalid question at `POST /api/v1/conversations/{id}/ask/stream` is now `422 validation_error`** (was `400 bad_request`): an empty, non-string, malformed or lone-surrogate question. That is what the real api answers for the same input and what the other conversation routes use, so the UI sees one answer whether the BFF or the api rejects it. A question over 4,000 characters is still `413 payload_too_large`. Anything that matched on the old `400` must match `422`.
+- The BFF routes take their request types from the generated contract (`AskRequest`, `ConversationCreate`) and build every error body as the generated `ErrorBody`; the `error` and `trace_id` fields can no longer be overwritten by an `extra` field. `relayJsonError` documents and passes through the api's `429 rate_limited` as well as `404`, `422`, `413` and `503`.
+- `src/mocks/README.md` no longer prescribes a `TODO(contract)` marker; there are none left in the code.
+
+### Added
+
+- `src/lib/ask-frames.ts`: the types of the four answer-stream frames (`sources`, `token`, `done`, `error`) with the citation shape taken from the generated contract, and `askFrame()` to build one. The mock fixtures use it, so they cannot drift from the frame shapes. (A stream is not a JSON schema, so OpenAPI cannot generate these; the api describes them in the operation text.)
+- `src/lib/contract.test.ts`: proves the other direction of the contract — the mock list, create and detail fixtures are accepted by the browser clients with the same ids, titles, messages and citations; the mock stream frames drive `askStream` to the same sources, tokens and `done` usage; every field the mock frames carry is named in the api's description of the stream in `docs/reference/openapi.json`; and that description lists `404`, `413`, `429` and `503` for the stream route.
+- Tests that the api's `429`, `413`, `503`, `404` and `422` pass through the ask-stream route with their status and code, and that the BFF's own `422` has exactly the api's `{ error, trace_id }` shape.
+
 ## [0.10.0] — 2026-10-06
 
 ### Added

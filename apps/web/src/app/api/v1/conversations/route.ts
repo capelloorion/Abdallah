@@ -1,3 +1,4 @@
+import type { components } from '@/lib/api-types';
 import {
   apiBase,
   bff,
@@ -43,7 +44,8 @@ export async function GET(req: Request): Promise<Response> {
   });
 }
 
-type CreateBody = { title?: string } | { invalid: true };
+/** What the api's `POST /v1/conversations` takes (generated); the other arm is a local rejection. */
+type CreateBody = components['schemas']['ConversationCreate'] | { invalid: true };
 
 /** Shape the client's body into what the api accepts: a trimmed, well-formed `title`, nothing else. */
 function parseCreateBody(text: string): CreateBody {
@@ -82,7 +84,8 @@ export async function POST(req: Request): Promise<Response> {
     const body = parseCreateBody(read.text);
     if ('invalid' in body) return errorResponse('validation_error', 422, traceId);
     log('info', 'bff inbound', { route: ROUTE, method: 'POST' });
-    if (isMockUpstream()) return mockJson(conversationCreatedFixture(body.title), traceId, 201);
+    if (isMockUpstream())
+      return mockJson(conversationCreatedFixture(body.title ?? undefined), traceId, 201);
     return proxyJson(
       `${apiBase()}/v1/conversations`,
       traceId,

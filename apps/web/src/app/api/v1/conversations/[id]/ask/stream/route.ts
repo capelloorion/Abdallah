@@ -12,6 +12,7 @@ import {
   MAX_QUESTION_CHARS,
   isConversationId,
 } from '@/lib/conversation-limits';
+import type { components } from '@/lib/api-types';
 import { log } from '@/lib/logger';
 import { isMockUpstream, mockJson, mockSse } from '@/lib/mocks';
 import { sseFrame } from '@/lib/sse';
@@ -27,7 +28,8 @@ export const dynamic = 'force-dynamic';
 
 const ROUTE_CLASS = '/api/v1/conversations/[id]/ask/stream';
 
-type AskBody = { question: string } | { error: 'invalid' | 'too_long' };
+/** What the api's `POST …/ask/stream` takes (generated); the other arm is a local rejection. */
+type AskBody = components['schemas']['AskRequest'] | { error: 'invalid' | 'too_long' };
 
 /** Characters (code points) in a string — the api's unit; an emoji is one, not two. */
 function characterCount(text: string): number {
@@ -84,7 +86,7 @@ function unreachableStream(err: unknown): Response {
  * non-empty, well-formed and at most 4000 characters. The question is user content and is never
  * logged.
  *
- * - An api error BEFORE the stream starts (404, 422, 413, 503…) keeps its status; only its
+ * - An api error BEFORE the stream starts (404, 422, 413, 429, 503…) keeps its status; only its
  *   `{ error, trace_id }` are relayed.
  * - An unreachable api, a timeout or a redirect → `502` carrying a terminal `error` frame.
  * - Only a `200` whose media type is `text/event-stream` is streamed; anything else is a `502`.
@@ -108,7 +110,7 @@ export async function POST(
     if ('error' in body) {
       return body.error === 'too_long'
         ? errorResponse('payload_too_large', 413, traceId)
-        : errorResponse('bad_request', 400, traceId);
+        : errorResponse('validation_error', 422, traceId); // what the api answers for an empty question
     }
     const conversationId = id.toLowerCase();
     log('info', 'bff inbound', { route: ROUTE_CLASS, method: 'POST' });

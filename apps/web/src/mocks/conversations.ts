@@ -1,6 +1,6 @@
 import type { components } from '@/lib/api-types';
 import { DEFAULT_CONVERSATION_TITLE } from '@/lib/conversation-limits';
-import { sseFrame } from '@/lib/sse';
+import { askFrame } from '@/lib/ask-frames';
 
 /**
  * Fixtures for the conversation BFF routes (`/api/v1/conversations[/{id}]`), served only when
@@ -130,21 +130,21 @@ const ASK_MOCK_ANSWER =
   'The trace id is minted by the BFF [1] and forwarded unchanged to the api on the x-trace-id header [2].';
 
 function words(text: string): string[] {
-  return text.split(' ').map((word) => sseFrame('token', { text: `${word} ` }));
+  return text.split(' ').map((word) => askFrame('token', { text: `${word} ` }));
 }
 
 /** A complete answer. */
 export const askStreamFrames: string[] = [
-  sseFrame('sources', { citations: ASK_MOCK_CITATIONS, count: 2 }),
+  askFrame('sources', { citations: ASK_MOCK_CITATIONS, count: 2 }),
   ...words(ASK_MOCK_ANSWER),
-  sseFrame('done', { citations: ASK_MOCK_CITATIONS, input_tokens: 42, output_tokens: 24 }),
+  askFrame('done', { citations: ASK_MOCK_CITATIONS, input_tokens: 42, output_tokens: 24 }),
 ];
 
 /** An answer cut off by a model failure: some tokens, then a terminal `error` frame (no `done`). */
 export const askStreamErrorFrames: string[] = [
-  sseFrame('sources', { citations: ASK_MOCK_CITATIONS, count: 2 }),
+  askFrame('sources', { citations: ASK_MOCK_CITATIONS, count: 2 }),
   ...words('The trace id is minted by the').slice(0, 4),
-  sseFrame('error', { error_kind: 'timeout' }),
+  askFrame('error', { error_kind: 'timeout' }),
 ];
 
 /** Put this anywhere in a question, in mock mode, to get `askStreamErrorFrames`. */

@@ -1,6 +1,9 @@
+import type { components } from '@/lib/api-types';
 import { log } from '@/lib/logger';
 import { BODY_READ_TIMEOUT_MS } from '@/lib/conversation-limits';
 import { type BffContext, fetchUpstream, isValidTraceId, withBff } from '@/lib/trace';
+
+type ErrorBody = components['schemas']['ErrorBody'];
 
 /** The api's base URL — server-side env only (the BFF rule), never `NEXT_PUBLIC_*`. */
 export function apiBase(): string {
@@ -42,7 +45,9 @@ export function errorResponse(
   traceId: string,
   extra: Record<string, unknown> = {},
 ): Response {
-  return Response.json({ error, ...extra, trace_id: traceId }, { status });
+  // `error` and `trace_id` come last, so an `extra` can never overwrite them.
+  const body: ErrorBody & Record<string, unknown> = { ...extra, error, trace_id: traceId };
+  return Response.json(body, { status });
 }
 
 function isTimeoutOrAbort(err: unknown): boolean {
@@ -157,7 +162,7 @@ export function bodyReadError(
 }
 
 /**
- * Relay an api error that arrived BEFORE a stream started (a 404, 422, 413 or 503) with its status
+ * Relay an api error that arrived BEFORE a stream started (a 404, 422, 413, 429 or 503) with its status
  * unchanged. Only `error` (a short snake_case code) and `trace_id` are relayed, so a field a
  * future api adds to an error body (a stack, a request echo) never reaches the browser. A body
  * that is not that shape becomes `502 upstream_error`; a deadline hit while reading it becomes
@@ -188,8 +193,9 @@ export async function relayJsonError(
   }
   log('info', 'bff upstream rejected', { route, status: res.status });
   const upstreamTrace = record.trace_id;
-  return Response.json(
-    { error: code, trace_id: isValidTraceId(upstreamTrace as string) ? upstreamTrace : traceId },
-    { status: res.status },
-  );
+  const relayed: ErrorBody = {
+    error: code,
+    trace_id: isValidTraceId(upstreamTrace as string) ? (upstreamTrace as string) : traceId,
+  };
+  return Response.json(relayed, { status: res.status });
 }
