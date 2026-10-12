@@ -165,7 +165,7 @@ Success is `200 text/event-stream` (`cache-control: no-cache`, `x-trace-id` head
 | `done`    | `{ "citations": […], "input_tokens", "output_tokens" }` | the end; the answer is **already stored** when this frame is sent                       |
 | `error`   | `{ "error_kind": "timeout" \| "network" \| … }`         | a failure after the first frame; the stream ends                                        |
 
-- **Before the first frame** (`404 not_found`, `413 payload_too_large`, `422 validation_error`, and `503 ai_unavailable`
+- **Before the first frame** (`404 not_found`, `413 payload_too_large`, `422 validation_error`, `429 rate_limited` when too many streams are open, and `503 ai_unavailable`
   when retrieval fails, is not configured or takes over 60 s) the response is the normal JSON error, not a stream.
 - **After the first frame** a failure is an `error` frame with a bounded `error_kind` (no message, no trace id — the UI
   reads the `x-trace-id` header). The question stays stored; **no assistant message** is stored, and there is no `done`.
@@ -176,6 +176,18 @@ Success is `200 text/event-stream` (`cache-control: no-cache`, `x-trace-id` head
   `AI_MAX_OUTPUT_TOKENS`), so `output_tokens` is normally set and is `null` only if that read fails or stalls. A client that
   is already gone just before the write gets no stored answer.
 - No question, answer, title or path is ever logged.
+
+#### Request and stream limits (api:5.2)
+
+Per-client rate limiting belongs in the web BFF (it sees the real client address; the api is reached only by the
+BFF). The api bounds what one request or stream can cost it. Source: `apps/api/app/limits.py`; settings in
+[environment-variables.md](environment-variables.md).
+
+| Limit                                                 | Default                                       | Over it                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body, `POST`/`PUT`/`PATCH` to any `/v1` route | 64 KiB (`API_MAX_REQUEST_BODY_BYTES`)         | `413 payload_too_large` before the route reads the body — by `Content-Length`, or counted while a chunked body arrives; the exact 4,000-character question check stays in the ask routes                                                                                                                                            |
+| Open `/ask/stream` responses                          | 20 per process (`API_MAX_CONCURRENT_STREAMS`) | `429 rate_limited` before anything is stored; the slot is freed when the stream ends, fails or the client leaves                                                                                                                                                                                                                    |
+| One write to a stream's client                        | 30 s (`API_STREAM_WRITE_STALL_SECONDS`)       | the stream is ended (no `done`, no answer stored; counted as `write_stalled`) and the model run, search call and DB session are released. It fires only once the transport buffers are full, so a reader that stops holds its slot until then or until the model run ends (bounded by the 60 s deadline and `AI_MAX_OUTPUT_TOKENS`) |
 
 ---
 

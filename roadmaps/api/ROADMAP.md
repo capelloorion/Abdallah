@@ -336,23 +336,38 @@ human steps listed on each item.
   - 2026-10-06 — planned. Must land before prod scales out: `main.prod.bicepparam` sets `apiReplicas` min 2.
   - 2026-10-06 — from the ingest threat model (api:4.1): a persisted cooldown, a lease that stores the corpus version and refuses older runs (rolling-deploy downgrade), lease expiry, a "started without finished" alert; the endpoint stays off in any environment with more than one replica until this ships; note K7 (index swap) for rebuild windows.
 
-### 5.2 — Request-size, rate and stream limits on the ask routes
+### 5.2 — Request-size and stream limits on the api (api part)
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [3.1]
 - **layers:** [endpoint]
 - **acceptance:**
-  - a request body over a fixed size (a few times the 4,000-character question limit) is rejected with `413 payload_too_large` before it is buffered and parsed; the exact 4,000-character check stays in the handler
-  - a per-client rate limit on `POST /v1/conversations`, `/ask` and `/ask/stream` returns `429 rate_limited` with the `{error, trace_id}` body; the limits are env-configurable with safe defaults and are off in tests unless set
-  - the number of concurrent streams is capped (a request over the cap gets `429 rate_limited`), and a stream whose client stops reading is ended after a write-stall timeout, releasing the model run and the DB session
+  - a `POST`/`PUT`/`PATCH` body to any `/v1` route over a fixed size (default 64 KiB, env-configurable) is rejected with `413 payload_too_large` and the `{error, trace_id}` body before the route reads it: by `Content-Length` when sent, and while counting bytes when it is not (chunked); the exact 4,000-character question check stays in the handler
+  - the number of concurrent `/ask/stream` responses per process is capped (default 20, env-configurable); a request over the cap gets `429 rate_limited` before anything is stored, and the slot is released on every exit (finished, failed, client gone, never started)
+  - a stream whose client stops reading is ended after a write-stall timeout (default 30 s, env-configurable), releasing the model run and the DB session
+  - the per-client rate limit is **not** in this item: it moves to a web item (the BFF sees the real client address; the api sees only the BFF) — see the 2026-10-07 decision below
   - no new limit logs content; counts and outcomes only
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **512 passed** (web: 500 passed, unchanged); the new file is `apps/api/tests/test_limits.py` (settings; the body limit declared, chunked, at the limit, per method and per path including `/v10`; the stream cap and slot release on every exit; a client that stops reading, also on the very first write; the stall counted as `write_stalled`), plus a stream-cap-free run of the existing stream tests
+  - `just openapi` then `git status` — no further change (the stream route documents `429`)
+  - `curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8000/v1/conversations -H 'content-type: application/json' --data-binary @<(head -c 100000 /dev/zero | tr '\0' 'a')` → `413`, body `{"error":"payload_too_large","trace_id":…}`; the same with `-H 'transfer-encoding: chunked'` → `413`; a normal body → `201`
+  - `API_MAX_CONCURRENT_STREAMS=1` in `apps/api/.env`, then open two `curl -N` streams to `/v1/conversations/$ID/ask/stream` at once → the second is `429` `{"error":"rate_limited",…}` as JSON and nothing is stored for it; after the first ends a new stream works
+  - a client that stops reading: `curl -N --limit-rate 1 …` against a long answer → the stream is ended after the stall timeout (log line `ask stream ended`, `outcome=write_stalled`), no assistant message is stored, and the next stream is accepted
+  - metric `team-assistant.ai.ask.outcomes`: `rejected` for the 429, `write_stalled` for the stalled reader
 - **needs_human:**
-  - decide the numbers (body size, requests per minute, concurrent streams) and whether the limit also belongs at the Container Apps ingress or the web BFF (threat model P2/P4; the infra roadmap would own an ingress setting)
+  - confirm the numbers (64 KiB body, 20 streams per process, 30 s write stall) fit real use; with several replicas the stream cap multiplies, and `main.prod.bicepparam` sets `apiReplicas` min 2
+  - **create the web item for the per-client rate limit** (a decision recorded here on 2026-10-07: the BFF sees the real client address, the api sees only the BFF) — this roadmap cannot edit the web roadmap; until it exists one user can hold every stream slot and cause `429` for everyone (threat model D2/A7)
+  - confirm the Container Apps ingress and the BFF enforce their own request-header and body-read timeouts: the api bounds the bytes of a body, not how slowly it arrives
+  - the shared-conversations threat model (R2, D4, A7, team-owned) still says there is no body-size limit and no stream cap; update it when the team next edits it
 - **notes:**
   - 2026-10-06 — planned by `/plan-roadmap api` from the open points left by api 1.2, 2.2 and 3.1 (threat model D2/D4/A7, risk R2 accepted until this ships). The 60 s stream deadline covers waits for the model, not writes to the client. A web counterpart (rate limit at the BFF, request timeouts) belongs in the web roadmap.
   - 2026-10-07 — decision (developer): per-client rate limiting belongs in the web BFF, which sees the real client address (the api is reached only by the BFF, so a per-IP limit there would see one client). When 5.2 is built it is split: the api gets a global concurrent-stream cap, the body-size cap and the write-stall timeout; the per-browser rate limit becomes a new item in the web roadmap.
+  - 2026-10-07 — started by Claude. Acceptance rewritten to the api part after the decision above; the numbers are defaults an operator can change (per process: with several replicas the stream cap multiplies).
+  - 2026-10-07 — implemented; awaiting test by the developer. Files: `apps/api/app/limits.py` (new: `get_limits`, `RequestSizeLimitMiddleware`, `StreamSlots`), `apps/api/app/main.py` (middleware: Trace > RequestSizeLimit > UnhandledError), `apps/api/app/routers/ask.py` (`EventStreamResponse` owns the slot, times each write and closes the graph run; the stream route takes a slot before doing anything; `429`), `apps/api/app/ai/streaming.py` (`SSE_HEADERS`), `apps/api/app/ai/telemetry.py` (`rejected`, `write_stalled` outcomes), tests, both `.env.example`s, `docker-compose.yml`, `docs/reference/environment-variables.md`, `docs/reference/http-api.md`, `docs/architecture/ai.md`, `apps/api/CLAUDE.md`, `apps/api/CHANGELOG.md`, regenerated `docs/reference/openapi.json` and `apps/web/src/lib/api-types.ts`, version 0.9.0 → 0.10.0 (`pyproject.toml`, `uv.lock` by hand on lock revision 3). No migration, no Bicep change (the settings have defaults in code), nothing applied, no Azure service contacted.
+  - 2026-10-07 — reviews run: `code-reviewer` and `security-reviewer` (no blockers). Fixed from them: a stall on the very first write left the graph run to garbage collection (the response now closes it), a stalled reader was counted as a plain disconnect (new `write_stalled` outcome), the stall check used a flag instead of the timer's own state, `/v10` and `/v1foo` matched the `/v1` limit, `inf` was accepted for the stall time, and a vacuous test was replaced. Mutation-checked: a response that never frees its slot, the 413 as an `Exception` (it becomes a 500), no write timeout, and no release on a refused stream each make a test fail. The explicit close on a first-write stall is belt-and-braces: CPython would collect the generator promptly anyway, so that test pins the property, not the mechanism.
+  - 2026-10-07 — decisions taken here: `_BodyTooLarge` is a `BaseException` so the catch-all for `Exception` just inside the middleware does not turn it into a 500 (valid only while no `BaseHTTPMiddleware` sits between; the chunked test covers the real stack); the stream cap is per process and counts all callers (the api cannot tell users apart); invalid or non-positive settings fall back to the defaults without a warning.
+  - 2026-10-07 — NOT done here: (a) no body-read deadline (a body trickled in a byte at a time holds a connection; the BFF is the only caller and enforces its own 5 s body read, uvicorn has no read timeout configured); (b) `DELETE` and other methods with a body are not counted (nothing reads one); (c) no `Retry-After` on the `429`; (d) a failure between the route returning and the response being called (dependency teardown) would leak a slot until restart; (e) no startup warning for an invalid limit setting.
+  - 2026-10-12 — confirmed by the developer (done). The web item asked for under needs_human now exists (web 4.2 and 4.3, planned 2026-10-12); the numbers, the ingress timeouts and the threat-model update are still open.
 
 ### 5.3 — Cap the model output and record ask outcomes
 

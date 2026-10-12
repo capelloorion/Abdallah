@@ -623,6 +623,15 @@ export interface operations {
           'text/event-stream': components['schemas']['ErrorBody'];
         };
       };
+      /** @description Too many streams are open in this process (`rate_limited`). Nothing is stored. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
       /** @description Unhandled error (`internal_error`) */
       500: {
         headers: {

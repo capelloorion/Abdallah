@@ -46,7 +46,18 @@ _ask_outcomes: Counter | None = None
 
 # The only values the ask-outcome metric may carry (rule 60: bounded attributes).
 ASK_ROUTE_CLASSES = frozenset({"ask", "ask_stream"})
-ASK_OUTCOMES = frozenset({"ok", "cut", "ai_unavailable", "timeout", "client_disconnected", "error"})
+ASK_OUTCOMES = frozenset(
+    {
+        "ok",
+        "cut",
+        "ai_unavailable",
+        "timeout",
+        "client_disconnected",
+        "error",
+        "rejected",
+        "write_stalled",
+    }
+)
 
 
 def _instruments() -> tuple[Histogram, Counter, Counter, Histogram]:

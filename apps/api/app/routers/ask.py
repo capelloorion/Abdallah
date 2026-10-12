@@ -24,6 +24,7 @@ import re
 import unicodedata
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -31,14 +32,17 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from pydantic import AfterValidator, BaseModel, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.types import Message as AsgiMessage
+from starlette.types import Receive, Scope, Send
 
 from app.ai.graph import Citation as RetrievedCitation
 from app.ai.graph import ask, build_graph
-from app.ai.streaming import sse, sse_response, stream_events
+from app.ai.streaming import SSE_HEADERS, sse, stream_events
 from app.ai.telemetry import error_kind, record_ask_outcome
 from app.ai.tools.retrieve import clean_title, fallback_title
 from app.db import get_session
 from app.errors import AIUnavailable, ApiError, ErrorBody, NotFound
+from app.limits import StreamSlot, get_limits, stream_slots
 from app.logging_config import get_logger
 from app.models.conversation import TITLE_MAX_LENGTH, Conversation, Message
 from app.repositories import conversations as repo
@@ -306,10 +310,83 @@ def _bounded_kind(value: object) -> str:
     return value if isinstance(value, str) and value in _ERROR_KINDS else "error"
 
 
+@dataclass
+class StreamState:
+    """Shared by the response and its frame generator: why the stream is being closed."""
+
+    stalled: bool = False  # a write to the client blocked for API_STREAM_WRITE_STALL_SECONDS
+
+
 class EventStreamResponse(StreamingResponse):
-    """Only so OpenAPI says ``text/event-stream`` instead of an extra ``application/json``."""
+    """The SSE response of `/ask/stream`: it owns a stream slot and bounds each write to the client.
+
+    It also makes OpenAPI say ``text/event-stream`` rather than an extra ``application/json``.
+    """
 
     media_type = "text/event-stream"
+
+    def __init__(
+        self,
+        content: AsyncIterator[str],
+        *,
+        slot: StreamSlot | None = None,
+        state: StreamState | None = None,
+        on_close: Callable[[], Awaitable[None]] | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(content, **kwargs)
+        self._slot = slot
+        self._state = state or StreamState()
+        self._on_close = on_close
+
+    async def stream_response(self, send: Send) -> None:
+        """Like Starlette's, but a write that blocks for ``API_STREAM_WRITE_STALL_SECONDS`` (a
+        client that stopped reading) ends the stream and closes the generator, so the model run, the
+        search call and the DB session are released instead of waiting on a dead socket.
+        """
+        stall = get_limits().stream_write_stall_seconds
+
+        async def write(message: AsgiMessage) -> None:
+            limit = asyncio.timeout(stall)
+            try:
+                async with limit:
+                    await send(message)
+            except TimeoutError:
+                if not limit.expired():
+                    raise  # not ours: the transport's own timeout
+                self._state.stalled = True
+                raise
+
+        try:
+            await write(
+                {
+                    "type": "http.response.start",
+                    "status": self.status_code,
+                    "headers": self.raw_headers,
+                }
+            )
+            async for chunk in self.body_iterator:
+                if not isinstance(chunk, bytes | memoryview):
+                    chunk = chunk.encode(self.charset)
+                await write({"type": "http.response.body", "body": chunk, "more_body": True})
+            await write({"type": "http.response.body", "body": b"", "more_body": False})
+        except TimeoutError:
+            if not self._state.stalled:
+                raise
+            _log.warning("ask stream ended", outcome="write_stalled")
+        finally:
+            await _close(self.body_iterator)  # a no-op when the generator already finished
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Whatever happened — finished, failed, the client left, or the very first write
+            # stalled (the generator then never started, so its own cleanup never runs).
+            if self._on_close is not None:
+                await self._on_close()
+            if self._slot is not None:
+                self._slot.release()
 
 
 async def _next_event(events: Events, deadline: float) -> Any:
@@ -342,6 +419,7 @@ async def _stream_frames(
     citations: list[Citation],
     history_size: int,
     is_disconnected: Callable[[], Awaitable[bool]],
+    state: StreamState,
 ) -> AsyncIterator[str]:
     """``sources`` → ``token``* → ``done`` — the answer is stored before ``done`` is yielded, so a
     client that leaves earlier (or a failure) stores no assistant message. One window stays: a
@@ -450,8 +528,11 @@ async def _stream_frames(
             {"citations": shown, "input_tokens": input_tokens, "output_tokens": output_tokens},
         )
     except asyncio.CancelledError, GeneratorExit:
-        _log.info("ask stream ended by the client", outcome="client_disconnected")
-        record("client_disconnected")
+        _log.info(
+            "ask stream ended by the client",
+            outcome="write_stalled" if state.stalled else "client_disconnected",
+        )
+        record("write_stalled" if state.stalled else "client_disconnected")
         raise
     finally:
         await _close(events)
@@ -459,6 +540,7 @@ async def _stream_frames(
 
 @router.post(
     "/{conversation_id}/ask/stream",
+    status_code=200,  # explicit: FastAPI cannot read the default from EventStreamResponse.__init__
     response_model=None,
     response_class=EventStreamResponse,
     responses={
@@ -470,6 +552,11 @@ async def _stream_frames(
         413: {
             "model": ErrorBody,
             "description": f"Question over {MAX_QUESTION_CHARS} characters (`payload_too_large`)",
+        },
+        429: {
+            "model": ErrorBody,
+            "description": "Too many streams are open in this process (`rate_limited`). "
+            "Nothing is stored.",
         },
         503: {
             "model": ErrorBody,
@@ -488,6 +575,25 @@ async def ask_question_stream(
     """Like `/ask`, but streams the answer as Server-Sent Events. Same validation, history,
     title rule, bounds and citation checks; the difference is how the answer is delivered.
     """
+    slot = stream_slots.try_acquire()
+    if slot is None:  # too many streams open in this process: refuse before storing anything
+        record_ask_outcome("ask_stream", "rejected")
+        raise ApiError("rate_limited", status_code=429)
+    try:
+        return await _open_stream(session, graph, conversation_id, body, request, slot)
+    except BaseException:
+        slot.release()  # on success the response owns the slot and releases it when it ends
+        raise
+
+
+async def _open_stream(
+    session: AsyncSession,
+    graph: Any,
+    conversation_id: uuid.UUID,
+    body: AskRequest,
+    request: Request,
+    slot: StreamSlot,
+) -> EventStreamResponse:
     conversation, history = await _begin(session, conversation_id, body.question)
 
     events = stream_events(graph, body.question, history=history)
@@ -511,7 +617,8 @@ async def ask_question_stream(
         raise AIUnavailable()
 
     retrieved_citations = data.get("citations", [])
-    return sse_response(
+    state = StreamState()
+    return EventStreamResponse(
         _stream_frames(
             session,
             conversation,
@@ -522,5 +629,10 @@ async def ask_question_stream(
             citations=sanitize_citations(retrieved_citations),
             history_size=len(history),
             is_disconnected=request.is_disconnected,
-        )
+            state=state,
+        ),
+        headers=SSE_HEADERS,
+        slot=slot,
+        state=state,
+        on_close=lambda: _close(events),
     )

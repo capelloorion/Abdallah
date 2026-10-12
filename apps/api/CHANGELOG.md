@@ -7,6 +7,27 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-07
+
+### Added
+
+- **Request-size limit** (roadmap api:5.2): a `POST`, `PUT` or `PATCH` body to any `/v1` route over
+  `API_MAX_REQUEST_BODY_BYTES` (default 64 KiB) is `413 payload_too_large` with the usual `{error, trace_id}` body,
+  before the route reads it — by `Content-Length` when sent, and counted while a chunked body arrives. The exact
+  4,000-character question check stays in the ask routes.
+- **Stream cap**: at most `API_MAX_CONCURRENT_STREAMS` (default 20) `/v1/conversations/{id}/ask/stream` responses are
+  open per process; one more gets `429 rate_limited` before anything is stored. The slot is freed whenever the stream
+  ends, fails or the client leaves, including a client that goes before the first write. With several replicas the cap
+  multiplies.
+- **Write-stall timeout**: a write to a stream's client that blocks for `API_STREAM_WRITE_STALL_SECONDS` (default 30)
+  ends the stream and closes the generator, releasing the model run, the search call and the DB session; no `done` is sent
+  and no answer is stored.
+- `rejected` (a stream refused by the cap) and `write_stalled` (a client that stopped reading) are new values of the
+  `team-assistant.ai.ask.outcomes` metric.
+- The new settings are in both `.env.example`s, `docker-compose.yml` and `docs/reference/environment-variables.md`;
+  the OpenAPI contract (`429` on the stream route) and the web's `api-types.ts` are regenerated.
+- Per-client rate limiting is **not** in the api: it is a web (BFF) concern, because the api is reached only by the BFF.
+
 ## [0.9.0] — 2026-10-07
 
 ### Added

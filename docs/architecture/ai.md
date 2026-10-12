@@ -120,7 +120,7 @@ The ask route (`routers/ask.py`, api:2.2) sends history only as human/assistant 
 `trace_id`, and — after the call — `gen_ai.usage.input_tokens` / `output_tokens`; metrics
 `team-assistant.ai.model.duration`, `.model.tokens`, `.model.failures`, `.retrieval.duration`, and
 `.ask.outcomes` (`record_ask_outcome`, one count per ask by `route_class` `ask`|`ask_stream` and `outcome`
-`ok`|`cut`|`ai_unavailable`|`timeout`|`client_disconnected`|`error`, both checked against those fixed sets)
+`ok`|`cut`|`ai_unavailable`|`timeout`|`client_disconnected`|`error`|`rejected`|`write_stalled`, both checked against those fixed sets)
 (bounded attributes: deployment, outcome, token type, error kind, route class); one `ai.model_call` custom
 event; one structured log line. **No prompt, completion, retrieved text or user identifier
 anywhere.** The OTel GenAI auto-instrumentation packages are deliberately not used (pin coupling

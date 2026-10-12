@@ -34,6 +34,7 @@ from app.ai.graph import Citation, GraphState, _message_text, citations_for
 from app.ai.telemetry import error_kind, extract_usage
 
 SSE_MEDIA_TYPE = "text/event-stream"
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
@@ -119,5 +120,5 @@ def sse_response(frames: AsyncIterator[str]) -> StreamingResponse:
     return StreamingResponse(
         frames,
         media_type=SSE_MEDIA_TYPE,
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers=SSE_HEADERS,
     )

@@ -11,7 +11,7 @@ this as a starting map; read the actual files when you need detail.
 
 - `main.py` — app factory + module-level `app` (so `uvicorn app.main:app` works). Bootstrap
   order: configure **structlog first** → `init_observability` (fail-safe) → `install_error_handlers`
-  + `UnhandledErrorMiddleware` → add `TraceMiddleware` (outermost) → include routers. The lifespan hook logs the degraded WARNING at startup if disabled and
+  + `UnhandledErrorMiddleware` → `RequestSizeLimitMiddleware` (`limits.py`, api:5.2) → add `TraceMiddleware` (outermost) → include routers. The lifespan hook logs the degraded WARNING at startup if disabled and
   awaits `dispose_engine()` on shutdown.
 - `routers/v1.py` — the **mandatory `/v1` business router** (`v1_router`, `prefix="/v1"`); feature
   routers attach here (ADR-0001 / rule 05). `main.py` includes it alongside `routes.py`.
@@ -64,6 +64,9 @@ this as a starting map; read the actual files when you need detail.
   for `EXTERNAL_DATABASE_URL`: `get_external_session()`, non-SELECT statements refused).
 - `routers/conversations.py` + `repositories/conversations.py` — `/v1/conversations` (create, list, read; roadmap api:1.2). The router owns the request/response models and
   the error mapping; the repository owns the `select(...)` queries and takes an `AsyncSession` (tests pass a fake).
+- `limits.py` — request-size and stream limits (roadmap api:5.2): `RequestSizeLimitMiddleware` (`413` over `API_MAX_REQUEST_BODY_BYTES`,
+  declared or counted), `stream_slots` (`API_MAX_CONCURRENT_STREAMS` open `/ask/stream` responses per process, `429` over it) and
+  `API_STREAM_WRITE_STALL_SECONDS`. Per-client rate limiting lives in the web BFF, not here.
 - `routers/ask.py` — `POST /v1/conversations/{id}/ask` (roadmap api:2.2): stores the question, runs
   `app.ai.graph.ask` with the last 10 stored messages as history (human/assistant only), stores the answer
   (`token_count` = output tokens). Bounds the answer (20,000 chars), keeps only safe relative citation paths, `413`
