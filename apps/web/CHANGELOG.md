@@ -7,6 +7,25 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-12
+
+### Added
+
+- **Per-client rate limit and stream cap at the BFF.** `POST /api/v1/conversations/{id}/ask/stream` and `POST /api/v1/conversations` now refuse a client that is over its allowance with `429 {error: "rate_limited", trace_id}` and a `Retry-After` header, before the body is read and before anything is forwarded: no question reaches the model and nothing is stored. Defaults: 10 questions and 20 new chats per minute per client (`RATE_LIMIT_ASKS_PER_MINUTE`, `RATE_LIMIT_CREATES_PER_MINUTE`) and 2 answers streaming at once (`RATE_LIMIT_STREAMS_PER_CLIENT`, `Retry-After: 5`); invalid or out-of-range values fall back to the defaults. The stream slot is released on every exit: the stream ending, failing, the browser leaving, an api refusal, an unreachable api, a non-stream reply. Listing and reading are not limited. It applies in mock mode too.
+- **Who the client is:** the address the platform ingress appended to `x-forwarded-for`, `RATE_LIMIT_TRUSTED_PROXY_HOPS` entries from the end (default 1); entries before it are client-written and ignored, so a browser cannot choose its own bucket. IPv4 with a port and bracketed IPv6 are normalised; anything else, or no header, is one shared "unknown" client (so locally, with no proxy, everyone shares one allowance).
+- **Bounded and private:** the table of tracked clients is capped (`RATE_LIMIT_MAX_CLIENTS`, default 10,000): expired entries are dropped and, when it is still full, the oldest entry is evicted, so a flood of distinct addresses can reset counters but never lock a real client out; the address is only a map key and is never logged or used as a metric attribute. New counter `team-assistant.bff.rate_limited` (attribute: the route class only).
+- In memory and per process, by design: with several replicas the allowance multiplies; a shared store would need an ADR. A `429` is relayed from the api (api 5.2) unchanged.
+
+### Hardening from review
+
+- An IPv6 client is keyed by its **/64** (one host cannot mint endless identities from its own block); an IPv4-mapped address (`::ffff:1.2.3.4`) is the IPv4 client; a zone id, brackets, a port and leading zeros are normalised, so one client has one key. A table that is full evicts its oldest entry instead of sending everyone new to a shared overflow bucket (which one attacker could have exhausted for all).
+- The client is taken from the END of `x-forwarded-for` however long the header is (padding it no longer makes a client "unknown").
+- A stream slot is also released after `STREAM_TIMEOUT_MS` (and the answer cancelled) when a client keeps its connection open but stops reading, instead of holding it until the socket closes; the slot hand-off flag is set only after the wrapper exists.
+
+### Tests
+
+- `src/lib/rate-limit.test.ts` (config, address parsing and spoofing, windows, buckets, the bounded table, slots, releasing a stream on every exit) and `src/app/api/v1/conversations/rate-limit.test.ts` (the routes: `429` + `Retry-After`, nothing forwarded in real mode, mock mode, refusal before the body is read, per-client separation, a forged `x-forwarded-for` not dodging the limit, trusted hops, slot release on finish / browser leaving / api `404` / unreachable api / a non-stream reply, no slot for a request rejected early, no address in logs, the metric by route class only). Each guard was proven by removing it and watching a test fail.
+
 ## [0.11.0] — 2026-10-12
 
 ### Changed

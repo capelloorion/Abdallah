@@ -15,6 +15,7 @@ import {
   MIN_LIST_LIMIT,
 } from '@/lib/conversation-limits';
 import { log } from '@/lib/logger';
+import { enforceRateLimit } from '@/lib/rate-limit';
 import { isMockUpstream, mockJson } from '@/lib/mocks';
 import { conversationCreatedFixture, conversationListFixture } from '@/mocks/conversations';
 
@@ -78,6 +79,8 @@ function parseCreateBody(text: string): CreateBody {
  */
 export async function POST(req: Request): Promise<Response> {
   return bff(req, ROUTE, async ({ traceId }) => {
+    const limited = enforceRateLimit(req, 'create', ROUTE, traceId);
+    if (limited) return limited;
     if (!isJsonRequest(req)) return errorResponse('unsupported_media_type', 415, traceId);
     const read = await readTextCapped(req, MAX_CREATE_BODY_BYTES);
     if (!read.ok) return bodyReadError(read.reason, traceId);

@@ -84,6 +84,12 @@ services:
       TELEMETRY_AUTH_MODE: ${TELEMETRY_AUTH_MODE:-}
       # Upstream service for the BFF, via compose DNS (server-side only).
       API_BASE_URL: http://api:8000
+      # Per-client limits at the BFF (empty = the default; see apps/web/.env.example).
+      RATE_LIMIT_ASKS_PER_MINUTE: ${RATE_LIMIT_ASKS_PER_MINUTE:-10}
+      RATE_LIMIT_CREATES_PER_MINUTE: ${RATE_LIMIT_CREATES_PER_MINUTE:-20}
+      RATE_LIMIT_STREAMS_PER_CLIENT: ${RATE_LIMIT_STREAMS_PER_CLIENT:-2}
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:-1}
+      RATE_LIMIT_MAX_CLIENTS: ${RATE_LIMIT_MAX_CLIENTS:-10000}
     ports:
       - '3000:3000'
     depends_on:

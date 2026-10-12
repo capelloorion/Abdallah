@@ -299,7 +299,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 4.2 — Per-client rate limit and concurrent-stream cap at the BFF
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [1.2]
 - **layers:** [bff, docs]
 - **acceptance:**
@@ -310,15 +310,26 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - no client address, and nothing else personal, is logged or used as a metric attribute; the new counter `team-assistant.bff.rate_limited` carries only the route class
   - both modes work: with `MOCK_UPSTREAM=true` the same limits apply to the mock routes, so the behaviour can be seen without the api
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: **584 passed** (new: `src/lib/rate-limit.test.ts`, `src/app/api/v1/conversations/rate-limit.test.ts`)
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` succeeds
+  - by hand, mock mode (`MOCK_UPSTREAM=true`, `RATE_LIMIT_ASKS_PER_MINUTE=3` in `apps/web/.env.local`, `pnpm -C apps/web dev`): ask four questions in a row on `/chat` within a minute → the fourth shows the red line "Something went wrong (request_rejected)." (the friendly wording is web 4.3); wait a minute and it works again
+  - the real status and header, from PowerShell, with the dev server running: `1..4 | % { (Invoke-WebRequest -Method Post -Uri http://localhost:3000/api/v1/conversations -ContentType application/json -Body '{}' -SkipHttpErrorCheck).StatusCode }` with `RATE_LIMIT_CREATES_PER_MINUTE=3` → `201 201 201 429`; then `(Invoke-WebRequest … -SkipHttpErrorCheck).Headers["Retry-After"]` → a number of seconds ≤ 60 and the body `{"error":"rate_limited","trace_id":…}`
+  - concurrent streams: with `RATE_LIMIT_STREAMS_PER_CLIENT=1`, start two answers at once (two browser tabs, or two `curl.exe -N` calls to `/api/v1/conversations/<id>/ask/stream`) → the second is `429` with `Retry-After: 5`; after the first finishes a new one is accepted
+  - metric `team-assistant.bff.rate_limited` (App Insights, `customMetrics`) increments by one per refusal with only the route class as its dimension; no client address appears in any log line
 - **needs_human:**
   - confirm the numbers (10 asks and 20 creates per minute, 2 concurrent streams per client) against how the team really uses the app; shared office networks put many people behind one address
   - confirm what the platform ingress puts in `x-forwarded-for` in `dev` (how many hops, and that the browser cannot pre-fill the trusted entry), so the trusted-hop setting is right; a wrong value either blocks everyone as one client or lets a client choose its own bucket
   - the allowance is per BFF replica: with several replicas it multiplies (`main.prod.bicepparam` sets web replicas); a shared store is out of scope here and a later decision
   - a limit at the ingress itself (an infra item) is the stronger control; the infra roadmap has none yet
+  - set `RATE_LIMIT_TRUSTED_PROXY_HOPS` in the deployed environments once you know what the ingress sends in `x-forwarded-for` (the default 1 assumes the last entry is the one the ingress appended); the new variables are not in `infra/main.bicep`, so deployed apps run on the defaults until a human adds them
+  - when you check the ingress in `dev`, also confirm: (1) the form of the address it writes (plain IPv4, or IPv6 / IPv4-mapped; all are handled, but an unreadable form would put every client into one shared allowance), (2) the web container cannot be reached without the proxy (otherwise the last `x-forwarded-for` entry is client-chosen), and (3) how many proxies sit in front (Front Door plus the Container Apps ingress is two hops: set `RATE_LIMIT_TRUSTED_PROXY_HOPS=2`)
 - **notes:**
   - 2026-10-12 — planned (`/plan-roadmap web`) from `api:5.2`, which moved the per-client rate limit here on 2026-10-07: the BFF sees the real client address, the api sees only the BFF. Covers the shared-conversations threat model D1/D4/A7 and mitigation P2, risk R2. The body-size limit on these routes already exists (`MAX_ASK_BODY_BYTES`, `MAX_CREATE_BODY_BYTES`, 5 s body read); the answer stream is already bounded by `STREAM_TIMEOUT_MS` and ends when the browser disconnects.
   - 2026-10-12 — in-memory and per process, like the api's stream cap, by design: the app has no shared store and adding one needs an ADR.
+  - 2026-10-12 — started by Claude
+  - 2026-10-12 — implemented; awaiting test. Files: `apps/web/src/lib/rate-limit.ts` + test (new: config, `clientKey`, `RateLimiter`, `StreamSlots`, `enforceRateLimit`, `acquireStreamSlot`, `releaseWhenDone`), `apps/web/src/app/api/v1/conversations/rate-limit.test.ts` (new), the two BFF routes, `apps/web/src/lib/metrics.ts` (`recordRateLimited`), `apps/web/.env.example`, `docs/reference/{environment-variables,http-api}.md`, `docker-compose.yml`, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.11.0 → 0.12.0. Decisions taken here: a FIXED one-minute window (a burst of up to twice the allowance across a window edge is possible); asks and creates have separate allowances; a request is counted before it is validated, so invalid requests count too; the shared "unknown" client has the same numbers as one client (so it is stricter per caller); when the client table is full the OLDEST entry is evicted (an earlier version sent new clients to a shared overflow bucket; the security review showed one attacker could exhaust it for everyone). A request refused for the stream cap still consumed one ask token; the fixed window allows up to twice the allowance across a window edge.
+  - 2026-10-12 — reviews run: `security-reviewer` (no critical findings; one HIGH and four MEDIUM, all fixed: IPv6 keyed by /64, eviction instead of a shared overflow bucket, IPv4-mapped addresses and zone ids, the trusted entry taken from the end of a header of any length, a hard timer that frees a stalled reader's stream slot, and the hand-off flag set after the wrapper). Still open and human: the real ingress behaviour (needs_human above).
+  - 2026-10-12 — confirmed by the developer (done). The ingress checks and the numbers (needs_human above) are still open.
 
 ### 4.3 — Tell the person when they are rate-limited
 

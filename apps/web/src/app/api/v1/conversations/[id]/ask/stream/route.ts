@@ -14,6 +14,7 @@ import {
 } from '@/lib/conversation-limits';
 import type { components } from '@/lib/api-types';
 import { log } from '@/lib/logger';
+import { acquireStreamSlot, enforceRateLimit, releaseWhenDone } from '@/lib/rate-limit';
 import { isMockUpstream, mockJson, mockSse } from '@/lib/mocks';
 import { sseFrame } from '@/lib/sse';
 import { STREAM_TIMEOUT_MS, proxyStream, streamUpstream } from '@/lib/stream';
@@ -101,6 +102,9 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   return bff(req, ROUTE_CLASS, async ({ traceId }) => {
+    // First, before the body is read: a client over its allowance costs as little as possible.
+    const limited = enforceRateLimit(req, 'ask', ROUTE_CLASS, traceId);
+    if (limited) return limited;
     const { id } = await context.params;
     if (!isConversationId(id)) return errorResponse('validation_error', 422, traceId);
     if (!isJsonRequest(req)) return errorResponse('unsupported_media_type', 415, traceId);
@@ -113,45 +117,65 @@ export async function POST(
         : errorResponse('validation_error', 422, traceId); // what the api answers for an empty question
     }
     const conversationId = id.toLowerCase();
-    log('info', 'bff inbound', { route: ROUTE_CLASS, method: 'POST' });
-    if (isMockUpstream()) {
-      // One id is reserved to let a UI exercise the "error before the stream" path.
-      if (conversationId === NOT_FOUND_CONVERSATION_ID) {
-        return mockJson({ error: 'not_found', trace_id: traceId }, traceId, 404);
-      }
-      const failing = body.question.includes(ASK_MOCK_ERROR_MARKER);
-      return mockSse(failing ? askStreamErrorFrames : askStreamFrames, traceId);
-    }
-
-    const url = `${apiBase()}/v1/conversations/${conversationId}/ask/stream`;
-    let upstream: Response;
+    // A slot for this client's streaming answers; every exit below either hands it to the
+    // response (released when the body ends, fails or is cancelled) or releases it here.
+    const slot = acquireStreamSlot(req, ROUTE_CLASS, traceId);
+    if ('limited' in slot) return slot.limited;
+    let handedOff = false;
     try {
-      log('info', 'bff upstream stream', { route: ROUTE_CLASS, target: 'api' });
-      upstream = await streamUpstream(url, traceId, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ question: body.question }),
-        redirect: 'error',
-        // The whole-answer bound, plus: stop the model call when the browser goes away.
-        signal: AbortSignal.any([req.signal, AbortSignal.timeout(STREAM_TIMEOUT_MS)]),
-      });
-    } catch (err) {
-      // A browser that left is not an api failure.
-      log(req.signal.aborted ? 'info' : 'error', 'bff upstream stream failed', {
-        route: ROUTE_CLASS,
-        error: err instanceof Error ? err.name : 'error',
-      });
-      return unreachableStream(err);
+      log('info', 'bff inbound', { route: ROUTE_CLASS, method: 'POST' });
+      if (isMockUpstream()) {
+        // One id is reserved to let a UI exercise the "error before the stream" path.
+        if (conversationId === NOT_FOUND_CONVERSATION_ID) {
+          return mockJson({ error: 'not_found', trace_id: traceId }, traceId, 404);
+        }
+        const failing = body.question.includes(ASK_MOCK_ERROR_MARKER);
+        const wrapped = releaseWhenDone(
+          mockSse(failing ? askStreamErrorFrames : askStreamFrames, traceId),
+          slot.release,
+        );
+        handedOff = true;
+        return wrapped;
+      }
+
+      const url = `${apiBase()}/v1/conversations/${conversationId}/ask/stream`;
+      let upstream: Response;
+      try {
+        log('info', 'bff upstream stream', { route: ROUTE_CLASS, target: 'api' });
+        upstream = await streamUpstream(url, traceId, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ question: body.question }),
+          redirect: 'error',
+          // The whole-answer bound, plus: stop the model call when the browser goes away.
+          signal: AbortSignal.any([req.signal, AbortSignal.timeout(STREAM_TIMEOUT_MS)]),
+        });
+      } catch (err) {
+        // A browser that left is not an api failure.
+        log(req.signal.aborted ? 'info' : 'error', 'bff upstream stream failed', {
+          route: ROUTE_CLASS,
+          error: err instanceof Error ? err.name : 'error',
+        });
+        return unreachableStream(err);
+      }
+      if (!upstream.ok) return relayJsonError(upstream, traceId, ROUTE_CLASS);
+      if (
+        upstream.status !== 200 ||
+        !upstream.body ||
+        mediaType(upstream) !== 'text/event-stream'
+      ) {
+        void upstream.body?.cancel().catch(() => undefined);
+        log('error', 'bff upstream reply was not a stream', {
+          route: ROUTE_CLASS,
+          status: upstream.status,
+        });
+        return errorResponse('upstream_error', 502, traceId, { target: 'api' });
+      }
+      const wrapped = releaseWhenDone(proxyStream(upstream, traceId), slot.release);
+      handedOff = true;
+      return wrapped;
+    } finally {
+      if (!handedOff) slot.release();
     }
-    if (!upstream.ok) return relayJsonError(upstream, traceId, ROUTE_CLASS);
-    if (upstream.status !== 200 || !upstream.body || mediaType(upstream) !== 'text/event-stream') {
-      void upstream.body?.cancel().catch(() => undefined);
-      log('error', 'bff upstream reply was not a stream', {
-        route: ROUTE_CLASS,
-        status: upstream.status,
-      });
-      return errorResponse('upstream_error', 502, traceId, { target: 'api' });
-    }
-    return proxyStream(upstream, traceId);
   });
 }

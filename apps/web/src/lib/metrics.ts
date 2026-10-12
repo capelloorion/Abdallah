@@ -52,6 +52,7 @@ export function resolveTarget(url: string, env: NodeJS.ProcessEnv = process.env)
 let serverDuration: Histogram | undefined;
 let hopDuration: Histogram | undefined;
 let upstreamFailures: Counter | undefined;
+let rateLimited: Counter | undefined;
 
 function serverDurationHistogram(): Histogram {
   serverDuration ??= getMeter('http').createHistogram('team-assistant.http.server.duration', {
@@ -74,6 +75,26 @@ function upstreamFailureCounter(): Counter {
     description: 'BFF upstream calls that failed (network error or 5xx) by target and reason',
   });
   return upstreamFailures;
+}
+
+function rateLimitedCounter(): Counter {
+  rateLimited ??= getMeter('bff').createCounter('team-assistant.bff.rate_limited', {
+    description:
+      'Requests the BFF refused with 429 (per-client rate limit or stream cap) by route class',
+  });
+  return rateLimited;
+}
+
+/**
+ * Count one request refused with 429. The ONLY attribute is the route class (a fixed path):
+ * never a client address or anything else that identifies a person. Best-effort.
+ */
+export function recordRateLimited(routeClass: string): void {
+  try {
+    rateLimitedCounter().add(1, { route_class: routeClass });
+  } catch {
+    // Metrics are best-effort — never break the request path.
+  }
 }
 
 export interface ServerDurationSample {
@@ -133,4 +154,5 @@ export function __resetMetricsForTests(): void {
   serverDuration = undefined;
   hopDuration = undefined;
   upstreamFailures = undefined;
+  rateLimited = undefined;
 }

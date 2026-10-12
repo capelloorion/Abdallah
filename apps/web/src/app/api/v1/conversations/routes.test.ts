@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { __resetRateLimitForTests } from '@/lib/rate-limit';
 import { GET as getOne } from '@/app/api/v1/conversations/[id]/route';
 import { GET as list, POST as create } from '@/app/api/v1/conversations/route';
 import { readTextCapped } from '@/lib/bff-json';
@@ -45,6 +46,7 @@ const ENV_KEYS = ['API_BASE_URL', 'MOCK_UPSTREAM', 'APP_ENV'] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
 beforeEach(() => {
+  __resetRateLimitForTests();
   process.env.API_BASE_URL = API;
   delete process.env.MOCK_UPSTREAM;
   vi.mocked(log).mockClear();
