@@ -285,3 +285,42 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - 2026-10-06 — started by Claude. The wording is the PROPOSED one from the threat model (section 9); the team has not approved it yet — see needs_human.
   - 2026-10-06 — implemented; awaiting test. Files: `apps/web/src/components/chat/SharedChatsNotice.tsx` + test (new), `apps/web/src/app/chat/page.tsx`, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.9.0 → 0.10.0. The notice is three sentences, not literally one line: it is the proposed wording, kept whole. No reviewer agents run: a static, text-only component with no data, state or boundary.
   - 2026-10-06 — confirmed by the developer (done). The team approval of the wording and the browser look (needs_human above) are still open.
+
+### 4.2 — Per-client rate limit and concurrent-stream cap at the BFF
+
+- **status:** todo
+- **depends_on:** [1.2]
+- **layers:** [bff, docs]
+- **acceptance:**
+  - the BFF limits, per client, how often `POST /api/v1/conversations/{id}/ask/stream` and `POST /api/v1/conversations` may be called, over a sliding or fixed window (defaults: 10 asks and 20 creates per minute per client, env-configurable); a request over the limit gets `429` with the `{error: "rate_limited", trace_id}` body and a `Retry-After` header, and nothing is forwarded to the api, so no question reaches the model and nothing is stored
+  - the BFF also caps the answers one client can have streaming at once (default 2, env-configurable); the slot is released on every exit (finished, failed, browser gone, never started), the same as the api's own cap in `api:5.2`
+  - the client is identified from the address the platform ingress appends to `x-forwarded-for`: only the entry added by the trusted last hop is used (number of trusted hops configurable, default 1), never a value the browser can set; when no address can be read, requests share one stricter "unknown" bucket
+  - the limiter's memory is bounded: expired entries are dropped and the number of tracked clients is capped, so a flood of spoofed or distinct addresses cannot grow it without limit
+  - no client address, and nothing else personal, is logged or used as a metric attribute; the new counter `team-assistant.bff.rate_limited` carries only the route class
+  - both modes work: with `MOCK_UPSTREAM=true` the same limits apply to the mock routes, so the behaviour can be seen without the api
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - confirm the numbers (10 asks and 20 creates per minute, 2 concurrent streams per client) against how the team really uses the app; shared office networks put many people behind one address
+  - confirm what the platform ingress puts in `x-forwarded-for` in `dev` (how many hops, and that the browser cannot pre-fill the trusted entry), so the trusted-hop setting is right; a wrong value either blocks everyone as one client or lets a client choose its own bucket
+  - the allowance is per BFF replica: with several replicas it multiplies (`main.prod.bicepparam` sets web replicas); a shared store is out of scope here and a later decision
+  - a limit at the ingress itself (an infra item) is the stronger control; the infra roadmap has none yet
+- **notes:**
+  - 2026-10-12 — planned (`/plan-roadmap web`) from `api:5.2`, which moved the per-client rate limit here on 2026-10-07: the BFF sees the real client address, the api sees only the BFF. Covers the shared-conversations threat model D1/D4/A7 and mitigation P2, risk R2. The body-size limit on these routes already exists (`MAX_ASK_BODY_BYTES`, `MAX_CREATE_BODY_BYTES`, 5 s body read); the answer stream is already bounded by `STREAM_TIMEOUT_MS` and ends when the browser disconnects.
+  - 2026-10-12 — in-memory and per process, like the api's stream cap, by design: the app has no shared store and adding one needs an ADR.
+
+### 4.3 — Tell the person when they are rate-limited
+
+- **status:** todo
+- **depends_on:** [4.2]
+- **layers:** [ui]
+- **acceptance:**
+  - when a request is answered `429 rate_limited` (from the BFF in `4.2` or from the api's stream cap in `api:5.2`), the chat shows a plain message such as "Too many requests. Try again in N seconds." (N from `Retry-After` when it is present and sane, otherwise a general "in a moment") instead of the generic red line with a bare code; the question text stays in the input so it can be sent again
+  - a `Retry-After` value that is missing, not a number, negative or absurdly large is ignored; the message never shows server text
+  - the same applies to a failed **+ New chat** and a failed list load
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - none
+- **notes:**
+  - 2026-10-12 — planned. The red line today shows only the error code and the trace id (web 2.1); a rate limit is something the person can act on, so it gets its own wording. The trace id stays visible for support.
