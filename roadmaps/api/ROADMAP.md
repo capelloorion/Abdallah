@@ -399,7 +399,7 @@ human steps listed on each item.
 
 ### 5.4 — Say which retrieved chunks each citation covers
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [3.1]
 - **layers:** [ai, endpoint]
 - **acceptance:**
@@ -407,11 +407,19 @@ human steps listed on each item.
   - the value is validated before it is stored (integers within the retrieved count) and read back by `GET /v1/conversations/{id}` without breaking stored rows that lack it
   - OpenAPI and the web's `api-types.ts` are regenerated; the old shape stays readable
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: **526 passed** (web unchanged: typecheck and `contract.test.ts` pass with the regenerated types); new cases are in `tests/ai/test_ai_graph_streaming.py`, `tests/test_ask_api.py`, `tests/test_ask_stream_api.py`, `tests/test_conversations_api.py` and `tests/evals/cases.json`
+  - `just openapi` then `git status` — no further change (the contract and `apps/web/src/lib/api-types.ts` are current)
+  - with the api running against a real model and index (needs the human steps), ask a question that retrieves two chunks of one document and one of another: `Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/conversations/<id>/ask -ContentType application/json -Body '{"question":"How does trace_id propagation work?"}'` → every entry of `citations` has `chunks`, e.g. `[{title, path, chunks: [1, 3]}, {title, path, chunks: [2]}]`, and each `[n]` the answer uses appears in exactly one citation's `chunks`
+  - the same through `…/ask/stream` (`curl.exe -N`): the `sources` frame and the `done` frame carry the same `chunks`
+  - `GET /v1/conversations/<id>` → the stored answer's citations carry `chunks`; a conversation created before this change returns `chunks: null` for its old citations and still reads fine
 - **needs_human:**
   - the web UI needs a follow-up item to show the numbers against the Sources block (web roadmap; web 2.1 left it unnumbered on purpose)
 - **notes:**
   - 2026-10-06 — planned from the web 2.1 notes: the inline `[n]` markers index retrieved chunks, but citations are unique documents, so the numbers cannot be shown against the Sources block. A backward-compatible addition: MINOR bump.
+  - 2026-10-12 — started by Claude, implemented; awaiting test. Files: `apps/api/app/ai/graph.py` (`Citation.chunks`, `citations_for` numbers every retrieved chunk like `format_context`), `apps/api/app/routers/conversations.py` (`Citation.chunks`, `clean_chunks`, a tolerant validator), `apps/api/app/routers/ask.py` (`sanitize_citations(retrieved=…)` in the JSON and the streaming answer), `apps/api/app/ai/streaming.py` (docs), tests, `tests/evals/cases.json`, `docs/reference/{openapi.json,http-api.md}`, `apps/web/src/lib/api-types.ts` (regenerated), `apps/api/{CLAUDE.md,CHANGELOG.md,pyproject.toml,uv.lock}`, version 0.10.0 → 0.11.0 (a MINOR: a backward-compatible field).
+  - 2026-10-12 — review run: `code-reviewer`. Its one blocking finding (the prompt's numbering shifted to start at 0) was a false alarm: it read the file while a mutation check had temporarily changed `format_context`; the file is unchanged. Taken from its minor points: a list with entries but none usable reads as `null` (unknown) rather than `[]`, and a test that a chunk number beyond the retrieved count never reaches the answer or the row.
+  - 2026-10-12 — NOT done here: the web UI still shows Sources unnumbered. Showing the numbers against the Sources block is a web item (web 2.1 left it unnumbered on purpose); `apps/web/src/lib/api-types.ts` already has the optional `chunks`, so the web can start from the generated type.
+  - 2026-10-12 — confirmed by Abdallah Ahmed ("done").
 
 ### 5.5 — Decide where retrieved text goes in the prompt
 

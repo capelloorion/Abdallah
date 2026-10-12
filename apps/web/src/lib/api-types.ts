@@ -181,6 +181,11 @@ export interface components {
     };
     /** Citation */
     Citation: {
+      /**
+       * Chunks
+       * @description Numbers of the retrieved chunks (the `[n]` markers in the answer) that came from this document, ascending. `null` when unknown (an answer stored before this field existed).
+       */
+      chunks?: number[] | null;
       /** Path */
       path: string;
       /** Title */
@@ -587,7 +592,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Server-Sent Events, one `event:` and one JSON `data:` line per frame: `sources` `{"citations": [{"title", "path"}], "count"}` once retrieval is done, then `token` `{"text"}` for each piece of the answer, then `done` `{"citations", "input_tokens", "output_tokens"}`. The answer is stored before `done` is sent. A failure after the first frame is `error` `{"error_kind"}` and the stream ends (the question is kept, no answer is stored); a failure before the first frame is the normal JSON error (`503 ai_unavailable`). The `x-trace-id` header is on the response; the `error` frame carries no trace id. */
+      /** @description Server-Sent Events, one `event:` and one JSON `data:` line per frame: `sources` `{"citations": [{"title", "path", "chunks"}], "count"}` once retrieval is done, then `token` `{"text"}` for each piece of the answer, then `done` `{"citations", "input_tokens", "output_tokens"}`. The answer is stored before `done` is sent. A failure after the first frame is `error` `{"error_kind"}` and the stream ends (the question is kept, no answer is stored); a failure before the first frame is the normal JSON error (`503 ai_unavailable`). The `x-trace-id` header is on the response; the `error` frame carries no trace id. */
       200: {
         headers: {
           [name: string]: unknown;

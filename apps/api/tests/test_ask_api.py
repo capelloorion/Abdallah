@@ -43,6 +43,7 @@ from app.routers.ask import (
     sanitize_citations,
     title_from_question,
 )
+from app.routers.conversations import clean_chunks
 from tests.ai.fakes import FakeRetriever
 
 TRACE_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -202,7 +203,7 @@ def test_answers_with_the_answer_message_id_and_citations(setup: Any) -> None:
     body = res.json()
     assert set(body) == {"message_id", "answer", "citations"}
     assert body["answer"] == "The api listens on port 8000 [1]."
-    assert body["citations"] == [{"title": "The api service", "path": "docs/api.md"}]
+    assert body["citations"] == [{"title": "The api service", "path": "docs/api.md", "chunks": [1]}]
     assert session.added[1].id == uuid.UUID(body["message_id"])
 
 
@@ -216,7 +217,9 @@ def test_stores_the_question_then_the_answer_with_citations_and_output_tokens(
     assert (question.role, question.content) == ("user", "Which port does the api use?")
     assert question.citations is None and question.token_count is None
     assert answer.role == "assistant" and answer.content == "The api listens on port 8000 [1]."
-    assert json.loads(answer.citations) == [{"title": "The api service", "path": "docs/api.md"}]
+    assert json.loads(answer.citations) == [
+        {"title": "The api service", "path": "docs/api.md", "chunks": [1]}
+    ]
     assert answer.token_count == 5  # output tokens (decision Q6), not input (10) or the sum (15)
     assert {question.conversation_id, answer.conversation_id} == {conversation.id}
     assert session.commits == 2
@@ -623,7 +626,11 @@ def test_unsafe_citations_are_dropped_and_safe_ones_kept_in_order(setup: Any) ->
         {**CHUNK, "id": "4", "source": "docs/b.md", "title": "B"},
     ]
     res = _ask(setup(session, chunks=chunks), conversation, "q?")
-    expected = [{"title": "A", "path": "docs/a.md"}, {"title": "B", "path": "docs/b.md"}]
+    # the numbers are the [n] the model saw: the dropped chunks 1 and 3 still took theirs
+    expected = [
+        {"title": "A", "path": "docs/a.md", "chunks": [2]},
+        {"title": "B", "path": "docs/b.md", "chunks": [4]},
+    ]
     assert res.json()["citations"] == expected
     assert json.loads(session.added[1].citations) == expected
 
@@ -856,3 +863,90 @@ def test_a_failed_write_of_the_answer_is_counted_as_an_error(
     res = _ask(setup(session), conversation, "q?")
     assert res.status_code == 500
     assert outcomes == [("ask", "error")]
+
+
+# ---- chunk numbers on citations (roadmap api:5.4) ----------------------------------------------
+
+
+def test_the_answer_and_the_stored_row_carry_the_chunk_numbers_of_each_document(
+    setup: Any,
+) -> None:
+    conversation = _conversation()
+    session = FakeSession(found=conversation)
+    chunks = [
+        {**CHUNK, "id": "1", "source": "docs/a.md", "title": "A"},
+        {**CHUNK, "id": "2", "source": "docs/b.md", "title": "B"},
+        {**CHUNK, "id": "3", "source": "docs/a.md", "title": "A again"},
+    ]
+    res = _ask(setup(session, chunks=chunks), conversation, "q?")
+    expected = [
+        {"title": "A", "path": "docs/a.md", "chunks": [1, 3]},
+        {"title": "B", "path": "docs/b.md", "chunks": [2]},
+    ]
+    assert res.json()["citations"] == expected
+    assert json.loads(session.added[1].citations) == expected
+
+
+def test_chunk_numbers_are_validated_against_the_number_retrieved() -> None:
+    dirty = [
+        {
+            "title": "A",
+            "path": "docs/a.md",
+            "chunks": [3, 1, 1, 0, -2, 4, 99, 2.0, "2", None, [1], 2],
+        }
+    ]
+    cleaned = sanitize_citations(dirty, retrieved=3)
+    assert cleaned[0].chunks == [1, 2, 3]  # whole numbers 1..3, unique, ascending
+
+
+def test_a_boolean_is_not_a_chunk_number() -> None:
+    # True == 1 in Python: it must not be taken for chunk number 1
+    assert clean_chunks([True, False, 3], retrieved=3) == [3]
+    assert clean_chunks([True], retrieved=3) is None
+
+
+def test_a_citation_with_no_chunk_information_is_unknown_not_empty() -> None:
+    cleaned = sanitize_citations([{"title": "A", "path": "docs/a.md"}], retrieved=3)
+    assert cleaned[0].chunks is None
+    assert (
+        sanitize_citations([{"title": "A", "path": "docs/a.md", "chunks": "1"}], retrieved=3)[
+            0
+        ].chunks
+        is None
+    )  # not a list
+
+
+def test_chunk_numbers_are_capped() -> None:
+    many = [{"title": "A", "path": "docs/a.md", "chunks": list(range(1, 500))}]
+    cleaned = sanitize_citations(many, retrieved=10_000)
+    assert cleaned[0].chunks == list(range(1, 51))
+
+
+def test_clean_chunks_without_a_retrieved_count_only_enforces_the_cap() -> None:
+    assert clean_chunks([5, 1, 51, 3]) == [1, 3, 5]
+    assert clean_chunks("1") is None
+    assert clean_chunks(None) is None
+    assert clean_chunks([]) == []  # covers no chunks
+    assert clean_chunks([0, "x", 99_999]) is None  # entries, but none usable: unknown
+
+
+def test_numbers_beyond_what_was_retrieved_never_reach_the_answer_or_the_row(
+    setup: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defence in depth: whatever the graph hands over, only retrieved chunk numbers are kept."""
+    import app.routers.ask as ask_module
+    from app.ai.graph import Answer
+
+    async def fake_ask(*_: Any, **__: Any) -> Answer:
+        return Answer(
+            text="ok [1]",
+            citations=[{"title": "A", "path": "docs/a.md", "chunks": [1, 2, 9, 40]}],
+            context=[CHUNK, CHUNK],  # two chunks were retrieved
+        )
+
+    monkeypatch.setattr(ask_module, "ask", fake_ask)
+    conversation = _conversation()
+    session = FakeSession(found=conversation)
+    res = _ask(setup(session), conversation, "q?")
+    assert res.json()["citations"] == [{"title": "A", "path": "docs/a.md", "chunks": [1, 2]}]
+    assert json.loads(session.added[1].citations)[0]["chunks"] == [1, 2]

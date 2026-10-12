@@ -46,7 +46,7 @@ from app.limits import StreamSlot, get_limits, stream_slots
 from app.logging_config import get_logger
 from app.models.conversation import TITLE_MAX_LENGTH, Conversation, Message
 from app.repositories import conversations as repo
-from app.routers.conversations import Citation
+from app.routers.conversations import Citation, clean_chunks
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 _log = get_logger("app.ask")
@@ -141,11 +141,14 @@ def is_safe_citation_path(path: str) -> bool:
     )
 
 
-def sanitize_citations(citations: list[RetrievedCitation]) -> list[Citation]:
+def sanitize_citations(
+    citations: list[RetrievedCitation], *, retrieved: int | None = None
+) -> list[Citation]:
     """Retrieval's citations that are safe to store and show, at most ``MAX_CITATIONS``.
 
     A citation whose path fails the check is dropped (the count is logged, never the value);
-    the title is re-cleaned and falls back to the file name.
+    the title is re-cleaned and falls back to the file name. ``chunks`` keeps only whole numbers
+    from 1 to the number of chunks retrieved (``retrieved``).
     """
     safe: list[Citation] = []
     for item in citations:
@@ -156,7 +159,11 @@ def sanitize_citations(citations: list[RetrievedCitation]) -> list[Citation]:
             (item.get("title") or "").encode("utf-8", "replace").decode("utf-8")
         )  # no lone surrogate
         title = clean_title(raw_title) or clean_title(fallback_title(path)) or path
-        safe.append(Citation(title=title, path=path))
+        safe.append(
+            Citation(
+                title=title, path=path, chunks=clean_chunks(item.get("chunks"), retrieved=retrieved)
+            )
+        )
         if len(safe) == MAX_CITATIONS:
             break
     return safe
@@ -264,7 +271,7 @@ async def ask_question(
         raise AIUnavailable()
     cut = len(answer.text.strip()) > MAX_ANSWER_CHARS
 
-    citations = sanitize_citations(answer.citations)
+    citations = sanitize_citations(answer.citations, retrieved=len(answer.context))
     try:
         stored = await repo.add_assistant_message(
             session,
@@ -291,7 +298,8 @@ async def ask_question(
 
 _STREAM_DOC = (
     "Server-Sent Events, one `event:` and one JSON `data:` line per frame: "
-    '`sources` `{"citations": [{"title", "path"}], "count"}` once retrieval is done, then '
+    '`sources` `{"citations": [{"title", "path", "chunks"}], "count"}` once retrieval is '
+    "done, then "
     '`token` `{"text"}` for each piece of the answer, then `done` `{"citations", "input_tokens", '
     '"output_tokens"}`. The answer is stored before `done` is sent. A failure after the first '
     'frame is `error` `{"error_kind"}` and the stream ends (the question is kept, no answer is '
@@ -626,7 +634,7 @@ async def _open_stream(
             deadline,
             retrieved=int(data.get("count", 0)),
             raw_citations=len(retrieved_citations),
-            citations=sanitize_citations(retrieved_citations),
+            citations=sanitize_citations(retrieved_citations, retrieved=int(data.get("count", 0))),
             history_size=len(history),
             is_disconnected=request.is_disconnected,
             state=state,

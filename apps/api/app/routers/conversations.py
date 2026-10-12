@@ -16,7 +16,14 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import AfterValidator, BaseModel, StringConstraints, TypeAdapter
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    StringConstraints,
+    TypeAdapter,
+    field_validator,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
@@ -81,9 +88,40 @@ class ConversationList(BaseModel):
     count: int
 
 
+# A citation covers at most this many chunks (retrieval returns a handful).
+MAX_CITATION_CHUNKS = 50
+
+
+def clean_chunks(value: object, *, retrieved: int | None = None) -> list[int] | None:
+    """Chunk numbers made safe to store and show: whole numbers from 1 up to the number retrieved
+    (or ``MAX_CITATION_CHUNKS`` when that is not known), unique, ascending, at most
+    ``MAX_CITATION_CHUNKS``. A value that is not a list is ``None`` (unknown); odd entries inside a
+    list are dropped, so one bad value never makes a stored row unreadable.
+    """
+    if not isinstance(value, list):
+        return None
+    ceiling = MAX_CITATION_CHUNKS if retrieved is None else min(retrieved, MAX_CITATION_CHUNKS)
+    numbers = sorted({n for n in value if type(n) is int and 1 <= n <= ceiling})
+    # A list that held entries but none usable is unknown, not "covers no chunks".
+    return numbers if numbers or not value else None
+
+
 class Citation(BaseModel):
     title: str
     path: str
+    chunks: list[int] | None = Field(
+        default=None,
+        max_length=MAX_CITATION_CHUNKS,
+        description=(
+            "Numbers of the retrieved chunks (the `[n]` markers in the answer) that came from this "
+            "document, ascending. `null` when unknown (an answer stored before this field existed)."
+        ),
+    )
+
+    @field_validator("chunks", mode="before")
+    @classmethod
+    def _tolerant_chunks(cls, value: object) -> list[int] | None:
+        return clean_chunks(value)
 
 
 class MessageOut(BaseModel):

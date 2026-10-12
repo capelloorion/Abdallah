@@ -120,7 +120,8 @@ are user content and are never logged. Source: `apps/api/app/routers/conversatio
 | GET    | `/v1/conversations`      | `?limit=50` (1–100)                          | `200` `{ items: [{ id, title, updated_at }], count }`, newest `updated_at` first                                   | `422 validation_error` (limit out of range)                       |
 | GET    | `/v1/conversations/{id}` | —                                            | `200` `{ id, title, created_at, updated_at, messages: [{ id, role, content, citations, created_at }], truncated }` | `404 not_found` (unknown id), `422 validation_error` (not a UUID) |
 
-- Timestamps are ISO 8601 in UTC. `messages` are oldest first; `citations` is `[{ title, path }]` or `null`.
+- Timestamps are ISO 8601 in UTC. `messages` are oldest first; `citations` is `[{ title, path, chunks }]` or `null`; `chunks` is the numbers of the retrieved chunks
+  (the `[n]` markers in the answer) from that document, or `null` for an answer stored before the field existed.
 - A read returns at most the **500 most recent** messages; `truncated` is `true` when older ones were
   left out (there is no way yet to fetch them — paging is a later item). (This field is an addition to the draft contract in `docs/architecture.md` B4a.)
 - Every response echoes `x-trace-id`; errors use the `{ error, trace_id }` contract below.
@@ -128,7 +129,7 @@ are user content and are never logged. Source: `apps/api/app/routers/conversatio
 #### `POST /v1/conversations/{id}/ask` — ask a question (api:2.2)
 
 Source: `apps/api/app/routers/ask.py`. Request `{ "question": string }`; success
-`200 { message_id, answer, citations: [{ title, path }] }`. The web BFF does not mirror this JSON route
+`200 { message_id, answer, citations: [{ title, path, chunks }] }`. The web BFF does not mirror this JSON route
 (the chat page uses the stream route below).
 
 | Status | Code                | When                                                                                                                                |
@@ -149,7 +150,10 @@ Source: `apps/api/app/routers/ask.py`. Request `{ "question": string }`; success
 - **Bounded output:** the answer is trimmed and cut at 20,000 characters (the stored and returned text are identical).
   `citations` come only from retrieval (unique by path, at most 20); a citation whose `path` is not a plain relative
   path (a scheme, a leading `/`, a `..` segment, a backslash, quotes or angle brackets, control, bidi or zero-width characters, over 500 characters) is dropped.
-  A conversation with no sources returns `citations: []` and stores `NULL`.
+  Each citation carries `chunks`: the 1-based numbers of the retrieved chunks that came from that document (the same numbers
+  the model sees and cites as `[n]`, so `[2]` in the answer is the document whose `chunks` contain `2`). Only whole numbers from 1 up
+  to the number of chunks retrieved are kept (unique, ascending, at most 50); a dropped (unsafe) citation still leaves its numbers
+  unused, so the remaining numbers match the answer. A conversation with no sources returns `citations: []` and stores `NULL`.
 - No question, answer, title or path is ever logged.
 
 #### `POST /v1/conversations/{id}/ask/stream` — ask a question, streamed (api:3.1)
@@ -158,12 +162,12 @@ Same request, validation, history, title rule, bounds and citation checks as `/a
 Success is `200 text/event-stream` (`cache-control: no-cache`, `x-trace-id` header), one `event:` and one JSON
 `data:` line per frame:
 
-| Frame     | `data`                                                  | When                                                                                    |
-| --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `sources` | `{ "citations": [{ title, path }], "count": n }`        | once retrieval is done (`count` = chunks retrieved; `citations` are the validated ones) |
-| `token`   | `{ "text": "…" }`                                       | for each piece of the answer                                                            |
-| `done`    | `{ "citations": […], "input_tokens", "output_tokens" }` | the end; the answer is **already stored** when this frame is sent                       |
-| `error`   | `{ "error_kind": "timeout" \| "network" \| … }`         | a failure after the first frame; the stream ends                                        |
+| Frame     | `data`                                                   | When                                                                                    |
+| --------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `sources` | `{ "citations": [{ title, path, chunks }], "count": n }` | once retrieval is done (`count` = chunks retrieved; `citations` are the validated ones) |
+| `token`   | `{ "text": "…" }`                                        | for each piece of the answer                                                            |
+| `done`    | `{ "citations": […], "input_tokens", "output_tokens" }`  | the end; the answer is **already stored** when this frame is sent                       |
+| `error`   | `{ "error_kind": "timeout" \| "network" \| … }`          | a failure after the first frame; the stream ends                                        |
 
 - **Before the first frame** (`404 not_found`, `413 payload_too_large`, `422 validation_error`, `429 rate_limited` when too many streams are open, and `503 ai_unavailable`
   when retrieval fails, is not configured or takes over 60 s) the response is the normal JSON error, not a stream.

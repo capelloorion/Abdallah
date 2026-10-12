@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
@@ -158,10 +158,15 @@ def build_graph(
 
 
 class Citation(TypedDict):
-    """What a user sees for a source: the document's title and its path."""
+    """What a user sees for a source: the document's title and its path.
+
+    ``chunks`` are the numbers of the retrieved chunks (the ``[n]`` markers in the answer) that
+    came from this document, ascending. Absent on a citation from before the field existed.
+    """
 
     title: str
     path: str
+    chunks: NotRequired[list[int]]
 
 
 @dataclass
@@ -176,16 +181,23 @@ class Answer:
 def citations_for(chunks: list[RetrievedChunk]) -> list[Citation]:
     """One citation per distinct source path, in retrieval order (the first chunk's title wins).
 
+    Each carries ``chunks``: the 1-based numbers its chunks have in the context block the model
+    cites (``format_context`` numbers EVERY retrieved chunk, so a chunk with no source still takes
+    a number but belongs to no citation).
+
     Titles and paths are document content: never log them (rule 70).
     """
-    seen: set[str] = set()
-    citations: list[Citation] = []
-    for chunk in chunks:
+    by_path: dict[str, Citation] = {}
+    for number, chunk in enumerate(chunks, start=1):
         path = chunk.get("source") or ""
-        if path and path not in seen:
-            seen.add(path)
-            citations.append({"title": chunk_title(chunk), "path": path})
-    return citations
+        if not path:
+            continue
+        citation = by_path.get(path)
+        if citation is None:
+            citation = {"title": chunk_title(chunk), "path": path, "chunks": []}
+            by_path[path] = citation
+        citation["chunks"].append(number)
+    return list(by_path.values())
 
 
 async def ask(

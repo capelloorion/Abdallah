@@ -74,7 +74,7 @@ report token usage on streamed answers too.
    (`answer → tools → answer`) runs until it stops calling tools.
 
 `ask(graph, question, history=…)` is the non-streaming entry point and returns the answer text,
-the citations (`[{title, path}]`, unique by path, in retrieval order), the context and the token usage.
+the citations (`[{title, path, chunks}]`, unique by path, in retrieval order; `chunks` are the `[n]` numbers of that document's retrieved chunks), the context and the token usage.
 
 **`streaming.py`.** `stream_answer()` drives the same graph with LangGraph's `updates` +
 `messages` stream modes and yields Server-Sent Events: `sources` (after retrieval, carrying

@@ -182,7 +182,7 @@ def test_streams_sources_then_tokens_then_done(stream_setup: Any) -> None:
     assert names(parsed)[0] == "sources" and names(parsed)[-1] == "done"
     assert set(names(parsed)[1:-1]) == {"token"} and len(parsed) > 3
     sources, done = parsed[0][1], parsed[-1][1]
-    expected = [{"title": "The api service", "path": "docs/api.md"}]
+    expected = [{"title": "The api service", "path": "docs/api.md", "chunks": [1]}]
     assert sources == {"citations": expected, "count": 1}
     assert done == {"citations": expected, "input_tokens": 10, "output_tokens": 5}
     assert (
@@ -197,7 +197,9 @@ def test_the_answer_is_stored_with_citations_and_output_tokens(stream_setup: Any
     question, answer = session.added
     assert (question.role, question.content) == ("user", "Which port does the api use?")
     assert answer.role == "assistant" and answer.content == "The api listens on port 8000 [1]."
-    assert json.loads(answer.citations) == [{"title": "The api service", "path": "docs/api.md"}]
+    assert json.loads(answer.citations) == [
+        {"title": "The api service", "path": "docs/api.md", "chunks": [1]}
+    ]
     assert answer.token_count == 5  # output tokens (Q6)
     assert session.commits == 2
     assert conversation.title == "Which port does the api use?"
@@ -235,7 +237,7 @@ def test_unsafe_citation_paths_are_dropped_from_the_frames_and_from_storage(
         {**CHUNK, "id": "3", "source": "../../etc/passwd", "title": "Traversal"},
     ]
     parsed = frames(_post(stream_setup(session, chunks=chunks), conversation).text)
-    expected = [{"title": "A", "path": "docs/a.md"}]
+    expected = [{"title": "A", "path": "docs/a.md", "chunks": [2]}]
     assert parsed[0][1] == {"citations": expected, "count": 3}
     assert parsed[-1][1]["citations"] == expected
     assert json.loads(session.added[1].citations) == expected
@@ -863,3 +865,21 @@ def test_every_outcome_literal_in_the_router_is_one_the_metric_accepts() -> None
     assert literals <= ASK_OUTCOMES | ASK_ROUTE_CLASSES, literals - (
         ASK_OUTCOMES | ASK_ROUTE_CLASSES
     )
+
+
+def test_the_frames_and_the_stored_row_carry_the_chunk_numbers(stream_setup: Any) -> None:
+    conversation = _conversation()
+    session = ClosingSession(found=conversation)
+    chunks = [
+        {**CHUNK, "id": "1", "source": "docs/a.md", "title": "A"},
+        {**CHUNK, "id": "2", "source": "docs/b.md", "title": "B"},
+        {**CHUNK, "id": "3", "source": "docs/a.md", "title": "A again"},
+    ]
+    parsed = frames(_post(stream_setup(session, chunks=chunks), conversation).text)
+    expected = [
+        {"title": "A", "path": "docs/a.md", "chunks": [1, 3]},
+        {"title": "B", "path": "docs/b.md", "chunks": [2]},
+    ]
+    assert parsed[0][1] == {"citations": expected, "count": 3}
+    assert parsed[-1][1]["citations"] == expected
+    assert json.loads(session.added[1].citations) == expected

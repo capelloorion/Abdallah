@@ -246,7 +246,10 @@ def test_get_returns_the_conversation_with_messages_oldest_first(use_session: An
     assert [m["role"] for m in body["messages"]] == ["user", "assistant"]
     assert set(body["messages"][0]) == {"id", "role", "content", "citations", "created_at"}
     assert body["messages"][0]["citations"] is None
-    assert body["messages"][1]["citations"] == [{"title": "Tracing", "path": "docs/tracing.md"}]
+    # a row stored before `chunks` existed reads back with `chunks: null` (unknown)
+    assert body["messages"][1]["citations"] == [
+        {"title": "Tracing", "path": "docs/tracing.md", "chunks": None}
+    ]
     assert session.get_calls == [(Conversation, cid)]
 
 
@@ -464,3 +467,42 @@ def test_get_survives_hostile_stored_citations(use_session: Any, stored: str) ->
     res = use_session(session).get(f"/v1/conversations/{conversation.id}")
     assert res.status_code == 200  # not a 500 for the whole conversation
     assert res.json()["messages"][0]["citations"] is None
+
+
+# --- chunk numbers on stored citations (roadmap api:5.4) ---------------------------------------
+
+
+def _read_citations(use_session: Any, stored: Any) -> Any:
+    conversation = _conversation()
+    cid = conversation.id
+    message = _message(cid, "assistant", "x", seconds=1, citations=json.dumps(stored))
+    session = FakeSession(found=conversation, results=[[message]])
+    res = use_session(session).get(f"/v1/conversations/{cid}")
+    assert res.status_code == 200
+    return res.json()["messages"][0]["citations"]
+
+
+def test_stored_chunk_numbers_are_read_back(use_session: Any) -> None:
+    stored = [{"title": "T", "path": "docs/t.md", "chunks": [1, 3]}]
+    assert _read_citations(use_session, stored) == stored
+
+
+def test_odd_chunk_values_never_make_a_stored_row_unreadable(use_session: Any) -> None:
+    stored = [
+        {"title": "A", "path": "docs/a.md", "chunks": ["x", 1, 2.5, True, 0, -1, 2, 2]},
+        {"title": "B", "path": "docs/b.md", "chunks": "1,2"},
+        {"title": "C", "path": "docs/c.md", "chunks": None},
+        {"title": "D", "path": "docs/d.md", "chunks": list(range(1, 500))},
+    ]
+    read = _read_citations(use_session, stored)
+    assert [c["path"] for c in read] == ["docs/a.md", "docs/b.md", "docs/c.md", "docs/d.md"]
+    assert read[0]["chunks"] == [1, 2]  # only whole numbers from 1 up, unique, ascending
+    assert read[1]["chunks"] is None and read[2]["chunks"] is None  # unknown
+    assert read[3]["chunks"] == list(range(1, 51))  # capped
+
+
+def test_the_citation_schema_documents_chunks_as_optional(use_session: Any) -> None:
+    schema = app.openapi()["components"]["schemas"]["Citation"]
+    assert set(schema["properties"]) == {"title", "path", "chunks"}
+    assert schema["required"] == ["title", "path"]  # an old shape (no chunks) stays valid
+    assert "[n]" in schema["properties"]["chunks"]["description"]

@@ -45,8 +45,10 @@ CHUNKS = [
     },
 ]
 
-API_CITATION = {"title": "The api service", "path": "docs/api.md"}
-WEB_CITATION = {"title": "web.md", "path": "docs/web.md"}
+# chunk numbers are the [n] markers: CHUNKS[0] and CHUNKS[2] are from docs/api.md,
+# CHUNKS[1] from docs/web.md
+API_CITATION = {"title": "The api service", "path": "docs/api.md", "chunks": [1, 3]}
+WEB_CITATION = {"title": "web.md", "path": "docs/web.md", "chunks": [2]}
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +81,8 @@ def test_ask_runs_retrieval_then_model_and_collects_citations() -> None:
     answer = asyncio.run(ask(graph, "which port?"))
     assert answer.text == "Port 8000 [1]."
     assert retriever.calls == [("which port?", 2)]
-    assert answer.citations == [API_CITATION, WEB_CITATION]  # unique by path, retrieval order
+    top_two = [{**API_CITATION, "chunks": [1]}, WEB_CITATION]  # only two chunks were retrieved
+    assert answer.citations == top_two  # unique by path, retrieval order
     assert answer.input_tokens == 10 and answer.output_tokens == 5
 
 
@@ -141,11 +144,11 @@ def test_stream_answer_yields_sources_tokens_done() -> None:
     events = _collect(asyncio.run(run()))
     kinds = [e for e, _ in events]
     assert kinds[0] == "sources"
-    assert events[0][1] == {"citations": [API_CITATION], "count": 1}
+    assert events[0][1] == {"citations": [{**API_CITATION, "chunks": [1]}], "count": 1}
     assert kinds[-1] == "done"
     tokens = "".join(d["text"] for e, d in events if e == "token")
     assert tokens == "alpha beta"
-    assert events[-1][1]["citations"] == [API_CITATION]
+    assert events[-1][1]["citations"] == [{**API_CITATION, "chunks": [1]}]
     # Usage is provider-reported; a streaming fake aggregates chunks without it, so the
     # contract is "the keys are present, values may be None".
     assert set(events[-1][1]) == {"citations", "input_tokens", "output_tokens"}
@@ -188,12 +191,14 @@ def test_citations_skip_chunks_without_a_source() -> None:
         {"id": "x", "content": "c", "source": "", "score": None, "title": "No path"},
         {"id": "y", "content": "c", "source": "docs/a.md", "score": None},
     ]
-    assert citations_for(chunks) == [{"title": "a.md", "path": "docs/a.md"}]
+    assert citations_for(chunks) == [{"title": "a.md", "path": "docs/a.md", "chunks": [2]}]
 
 
 def test_a_blank_title_falls_back_to_the_file_name() -> None:
     chunks = [{"id": "x", "content": "c", "source": "docs/guide/setup.md", "score": 1, "title": ""}]
-    assert citations_for(chunks) == [{"title": "setup.md", "path": "docs/guide/setup.md"}]
+    assert citations_for(chunks) == [
+        {"title": "setup.md", "path": "docs/guide/setup.md", "chunks": [1]}
+    ]
 
 
 def test_a_windows_style_source_path_still_yields_a_file_name() -> None:
@@ -313,3 +318,41 @@ def test_the_streaming_path_retrieves_the_same_query() -> None:
 
     asyncio.run(run())
     assert retriever.calls == [("How does tracing work?\nAnd the api?", 2)]
+
+
+# ---- chunk numbers on citations (roadmap api:5.4) ----------------------------------------------
+
+
+def test_each_citation_lists_the_numbers_of_its_chunks_in_the_context_block() -> None:
+    citations = citations_for(CHUNKS)
+    assert [c["chunks"] for c in citations] == [[1, 3], [2]]
+    context = format_context(CHUNKS)
+    # the numbers are the ones the model sees, and cites as [n]
+    for citation in citations:
+        for number in citation["chunks"]:
+            assert f"[{number}] ({citation['path']})" in context
+
+
+def test_a_chunk_with_no_source_still_takes_its_number_but_belongs_to_no_citation() -> None:
+    chunks = [
+        {"id": "x", "content": "c", "source": "", "score": None},
+        {"id": "y", "content": "c", "source": "docs/a.md", "score": None},
+        {"id": "z", "content": "c", "source": "docs/a.md", "score": None},
+    ]
+    assert citations_for(chunks) == [{"title": "a.md", "path": "docs/a.md", "chunks": [2, 3]}]
+    assert "[1] (unknown)" in format_context(chunks)
+
+
+def test_the_stream_frames_carry_the_chunk_numbers() -> None:
+    graph = build_graph(
+        chat_model=fake_chat_model("ok [1] [3]"),
+        retriever=FakeRetriever(CHUNKS),
+        deployment_label="test",
+    )
+
+    async def run() -> list[str]:
+        return [f async for f in stream_answer(graph, "q")]
+
+    events = _collect(asyncio.run(run()))
+    assert events[0][1]["citations"][0]["chunks"] == [1, 3]
+    assert events[-1][1]["citations"][0]["chunks"] == [1, 3]

@@ -69,7 +69,7 @@ this as a starting map; read the actual files when you need detail.
   `API_STREAM_WRITE_STALL_SECONDS`. Per-client rate limiting lives in the web BFF, not here.
 - `routers/ask.py` — `POST /v1/conversations/{id}/ask` (roadmap api:2.2): stores the question, runs
   `app.ai.graph.ask` with the last 10 stored messages as history (human/assistant only), stores the answer
-  (`token_count` = output tokens). Bounds the answer (20,000 chars), keeps only safe relative citation paths, `413`
+  (`token_count` = output tokens). Bounds the answer (20,000 chars), keeps only safe relative citation paths, numbers each citation's `chunks` (the `[n]` markers; validated against the number retrieved), `413`
   over 4,000 characters, `503 ai_unavailable` on any model/search failure or after 60 s (question kept, no answer
   stored). The compiled graph comes from the `get_ask_graph` dependency — tests override it with fakes.
   `POST /v1/conversations/{id}/ask/stream` (api:3.1) is the same flow as Server-Sent Events built on

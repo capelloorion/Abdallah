@@ -7,6 +7,18 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-12
+
+### Added
+
+- **Chunk numbers on citations** (roadmap api:5.4). Each citation now carries `chunks: [n, …]`: the 1-based numbers of the retrieved chunks that came from that document, which are the same numbers the model sees in its context block and cites as `[n]` in the answer. A client can therefore show `[2]` against the right source. It is in the `sources` and `done` frames, the JSON answer and `GET /v1/conversations/{id}`, and in the stored `messages.citations` JSON.
+- The numbers are validated before they are stored: whole numbers only (a boolean, a float or a string is dropped), from 1 up to the number of chunks retrieved, unique, ascending, at most 50. A chunk with no usable source still takes its number (the model sees it) but belongs to no citation, and a citation dropped for an unsafe path leaves its numbers unused, so the numbers that remain match the answer.
+- Reading never breaks: a stored row from before this field reads back with `chunks: null` (unknown); odd values inside a stored list are dropped, and a list with entries but none usable reads as `null`, not as "covers no chunks".
+
+### Changed
+
+- OpenAPI: `Citation` gains an optional `chunks` (`integer[] | null`, at most 50). The old shape stays valid, so existing clients keep working (a client that rejects unknown fields must allow it). `docs/reference/openapi.json` and the web's `api-types.ts` are regenerated; the eval cases expect the numbers.
+
 ## [0.10.0] — 2026-10-07
 
 ### Added
