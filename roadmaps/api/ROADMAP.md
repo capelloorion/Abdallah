@@ -438,7 +438,7 @@ human steps listed on each item.
 
 ### 5.6 — Page the conversation list
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [1.2]
 - **layers:** [endpoint]
 - **acceptance:**
@@ -446,11 +446,18 @@ human steps listed on each item.
   - a malformed or tampered cursor returns `422 validation_error`; ordering stays stable while conversations are added or updated between pages
   - OpenAPI and `api-types.ts` regenerated; existing clients that ignore `next_cursor` keep working
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — api: all pass (545 with this item); the paging cases are in `tests/test_conversations_api.py` (`paging` section): the cursor round trip, altered and non-canonical cursors refused, the keyset condition in the compiled SQL, and a walk over 40 rows with many ties for page sizes 1–41 that equals the plain ordered list
+  - `just openapi` then `git status` — no further change (`next_cursor` and `cursor` are in `docs/reference/openapi.json` and `apps/web/src/lib/api-types.ts`)
+  - with the api running and more than one page of conversations: `curl.exe -s "http://localhost:8000/v1/conversations?limit=2"` → `items` has 2, `next_cursor` is a string; `curl.exe -s "http://localhost:8000/v1/conversations?limit=2&cursor=<that string>"` → the next 2, none repeated; the last page has `next_cursor: null`
+  - `curl.exe -i "http://localhost:8000/v1/conversations?cursor=garbage"` → `422 {"error":"validation_error",…}`; the same with one character of a real cursor changed
+  - `curl.exe -s "http://localhost:8000/v1/conversations"` (no cursor) still returns the newest 50 as before, with `next_cursor` added
 - **needs_human:**
-  - the web needs a follow-up item to load more than the newest 50 chats (web roadmap)
+  - the web needs a follow-up item to load more than the newest 50 chats (web roadmap): the BFF list route forwards only a validated `limit` today, so it must also validate and forward `cursor`, and the chat list must offer "load more"
+  - the paging check against Azure SQL needs the migration applied and more than one page of rows (the SQL Server ordering of `id` as a tie-break runs in the database, so it is consistent with `ORDER BY`; the condition itself was proven on an in-memory SQLite table, not on SQL Server)
 - **notes:**
   - 2026-10-06 — planned from the api 1.2 notes (a flood of conversations can push real ones off the list; threat model P2). Pair with 5.2.
+  - 2026-10-12 — started by Claude, implemented; awaiting test. Files: `apps/api/app/repositories/conversations.py` (`Cursor`, `InvalidCursor`, `ConversationPage`, keyset `list_conversations` reading `limit + 1`), `apps/api/app/routers/conversations.py` (`cursor` query, `next_cursor`), `tests/test_conversations_api.py`, `docs/reference/http-api.md`, `docs/reference/openapi.json`, `apps/web/src/lib/api-types.ts`, `apps/api/CLAUDE.md`, `apps/api/CHANGELOG.md` (0.12.0), `pyproject.toml` + `uv.lock`. A tampered cursor is one this api would not have issued (shape and canonical spelling); the cursor is not signed, so a hand-built valid cursor just starts the list at that position, which leaks nothing because conversations are shared (ADR-0014).
+  - 2026-10-14 — confirmed by Abdallah Ahmed ("done").
 
 ### 5.7 — Operator purge runbook for stored conversations
 

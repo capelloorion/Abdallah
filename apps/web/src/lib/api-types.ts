@@ -76,7 +76,9 @@ export interface paths {
     };
     /**
      * List Conversations
-     * @description The most recently updated conversations, newest first.
+     * @description The most recently updated conversations, newest first, one page at a time.
+     *
+     *     A malformed or altered `cursor` is `422 validation_error`.
      */
     get: operations['list_conversations_v1_conversations_get'];
     put?: never;
@@ -225,10 +227,18 @@ export interface components {
     };
     /** ConversationList */
     ConversationList: {
-      /** Count */
+      /**
+       * Count
+       * @description How many conversations are on this page.
+       */
       count: number;
       /** Items */
       items: components['schemas']['ConversationSummary'][];
+      /**
+       * Next Cursor
+       * @description Opaque. Pass it as `cursor` to get the next page; `null` when this is the last one.
+       */
+      next_cursor?: string | null;
     };
     /** ConversationOut */
     ConversationOut: {
@@ -379,6 +389,8 @@ export interface operations {
     parameters: {
       query?: {
         limit?: number;
+        /** @description The `next_cursor` of the previous page. Omit it for the first page. */
+        cursor?: string | null;
       };
       header?: never;
       path?: never;

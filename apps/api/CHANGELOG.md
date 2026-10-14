@@ -7,6 +7,12 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-12
+
+### Added
+
+- **Paged conversation list** (roadmap api:5.6). `GET /v1/conversations` accepts an opaque `cursor` and returns `next_cursor` (a string, or `null` on the last page). `limit` and the first page behave as before, so a client that ignores `next_cursor` keeps working. Paging is keyset on the list's own order (`updated_at`, then `created_at`, then `id`), so conversations added or updated between pages never repeat or skip a row that was already in place (a row updated mid-walk jumps to the front and is not visited by that walk, as with any keyset paging). A malformed or altered `cursor` is `422 validation_error`; the value is never logged or echoed. The OpenAPI contract and the web's `api-types.ts` are regenerated.
+
 ## [0.11.0] — 2026-10-12
 
 ### Added

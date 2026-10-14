@@ -64,6 +64,7 @@ this as a starting map; read the actual files when you need detail.
   for `EXTERNAL_DATABASE_URL`: `get_external_session()`, non-SELECT statements refused).
 - `routers/conversations.py` + `repositories/conversations.py` — `/v1/conversations` (create, list, read; roadmap api:1.2). The router owns the request/response models and
   the error mapping; the repository owns the `select(...)` queries and takes an `AsyncSession` (tests pass a fake).
+  The list is paged by an opaque keyset `cursor` (api:5.6): `Cursor` in the repository encodes the last row's `(updated_at, created_at, id)`, `decode` accepts only the exact text `encode` produces (anything else is `422`), and the query reads `limit + 1` rows to know whether `next_cursor` exists. The cursor is never logged.
 - `limits.py` — request-size and stream limits (roadmap api:5.2): `RequestSizeLimitMiddleware` (`413` over `API_MAX_REQUEST_BODY_BYTES`,
   declared or counted), `stream_slots` (`API_MAX_CONCURRENT_STREAMS` open `/ask/stream` responses per process, `429` over it) and
   `API_STREAM_WRITE_STALL_SECONDS`. Per-client rate limiting lives in the web BFF, not here.

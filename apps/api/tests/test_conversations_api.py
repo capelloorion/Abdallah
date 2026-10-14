@@ -23,7 +23,7 @@ import app.routers.conversations as conversations_router
 from app.db import get_session
 from app.main import app
 from app.models import Conversation, Message
-from app.repositories.conversations import MAX_MESSAGES_PER_READ
+from app.repositories.conversations import MAX_MESSAGES_PER_READ, Cursor, InvalidCursor
 
 TRACE_RE = re.compile(r"^[0-9a-f]{32}$")
 INBOUND = "0eb01" + "c" * 27
@@ -201,7 +201,7 @@ def test_list_orders_by_updated_at_and_defaults_to_50(use_session: Any) -> None:
     session = FakeSession(results=[[]])
     use_session(session).get("/v1/conversations")
     sql = session.sql()
-    assert "TOP 50" in sql
+    assert "TOP 51" in sql  # one extra row tells whether another page exists
     assert "ORDER BY conversations.updated_at DESC, conversations.created_at DESC" in sql
 
 
@@ -210,7 +210,7 @@ def test_list_honours_the_limit_bounds(use_session: Any, limit: int) -> None:
     session = FakeSession(results=[[]])
     res = use_session(session).get("/v1/conversations", params={"limit": limit})
     assert res.status_code == 200
-    assert f"TOP {limit}" in session.sql()
+    assert f"TOP {limit + 1}" in session.sql()
 
 
 @pytest.mark.parametrize("limit", ["0", "101", "-1", "abc"])
@@ -225,7 +225,191 @@ def test_list_rejects_a_limit_outside_1_to_100(use_session: Any, limit: str) -> 
 def test_list_with_nothing_stored_is_empty_not_an_error(use_session: Any) -> None:
     res = use_session(FakeSession(results=[[]])).get("/v1/conversations")
     assert res.status_code == 200
-    assert res.json() == {"items": [], "count": 0}
+    assert res.json() == {"items": [], "count": 0, "next_cursor": None}
+
+
+# --- GET /v1/conversations paging (roadmap api:5.6) ---------------------------------------
+
+
+def _cursor_for(conversation: Conversation) -> str:
+    return Cursor(conversation.updated_at, conversation.created_at, conversation.id).encode()
+
+
+def test_a_full_page_with_more_behind_it_returns_a_cursor_for_its_last_row(
+    use_session: Any,
+) -> None:
+    rows = [_conversation(f"c{i}", minutes=10 - i) for i in range(4)]  # limit 3 reads 4
+    res = use_session(FakeSession(results=[rows])).get("/v1/conversations", params={"limit": 3})
+    body = res.json()
+    assert [i["title"] for i in body["items"]] == ["c0", "c1", "c2"]  # the extra row is not shown
+    assert body["count"] == 3
+    assert body["next_cursor"] == _cursor_for(rows[2])
+
+
+def test_the_last_page_has_no_cursor_even_when_it_is_exactly_full(use_session: Any) -> None:
+    rows = [_conversation(f"c{i}") for i in range(3)]
+    res = use_session(FakeSession(results=[rows])).get("/v1/conversations", params={"limit": 3})
+    assert res.json()["next_cursor"] is None
+    assert res.json()["count"] == 3
+
+
+def test_the_first_page_has_no_keyset_condition(use_session: Any) -> None:
+    session = FakeSession(results=[[]])
+    use_session(session).get("/v1/conversations")
+    assert "WHERE" not in session.sql()
+
+
+def test_a_cursor_starts_the_page_strictly_after_its_row(use_session: Any) -> None:
+    last = _conversation("last", minutes=5)
+    session = FakeSession(results=[[]])
+    res = use_session(session).get("/v1/conversations", params={"cursor": _cursor_for(last)})
+    assert res.status_code == 200
+    sql = session.sql()
+    u, c, i = "2026-10-06 09:05:00", "2026-10-06 09:00:00", str(last.id)
+    # updated_at older, or tied and created_at older, or tied on both and a later id: the same
+    # order as ORDER BY, so a row is never repeated or skipped.
+    assert f"conversations.updated_at < '{u}'" in sql
+    assert f"conversations.updated_at = '{u}' AND (conversations.created_at < '{c}'" in sql
+    assert f"conversations.created_at = '{c}' AND conversations.id > '{i}'" in sql
+    assert sql.index("WHERE") < sql.index("ORDER BY")
+
+
+def test_walking_the_cursors_visits_every_row_once_in_list_order() -> None:
+    # (Id order is dialect-specific; SQL Server compares the same column in WHERE and ORDER BY.)
+    # The keyset condition is run for real on an in-memory SQLite table (SQL Server is not
+    # available here): many rows tie on updated_at and on created_at, and for every page size
+    # the walk must equal the plain ordered list, with no row repeated or skipped.
+    import asyncio
+    import random
+
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from app.repositories.conversations import list_conversations
+
+    random.seed(7)
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "create table conversations "
+            "(id char(32) primary key, title text, created_at datetime, updated_at datetime)"
+        )
+    rows = [
+        Conversation(
+            id=uuid.uuid4(),
+            title=f"c{i}",
+            created_at=T0 + timedelta(minutes=random.randint(0, 3)),
+            updated_at=T0 + timedelta(minutes=random.randint(0, 3)),
+        )
+        for i in range(40)
+    ]
+    with Session(engine) as db:
+        db.add_all(rows)
+        db.commit()
+
+        class Async:
+            async def scalars(self, statement: Any) -> Any:
+                return db.scalars(statement)
+
+        async def walk(limit: int) -> list[uuid.UUID]:
+            seen: list[uuid.UUID] = []
+            after = None
+            for _ in range(100):  # a wrong condition must fail, not loop for ever
+                page = await list_conversations(Async(), limit, after)  # type: ignore[arg-type]
+                seen += [c.id for c in page.conversations]
+                if page.next_cursor is None:
+                    return seen
+                after = Cursor.decode(page.next_cursor)
+            raise AssertionError("the walk never reached the last page")
+
+        expected = [
+            c.id
+            for c in db.scalars(
+                select(Conversation).order_by(
+                    Conversation.updated_at.desc(), Conversation.created_at.desc(), Conversation.id
+                )
+            )
+        ]
+        for limit in (1, 3, 7, 39, 40, 41):
+            assert asyncio.run(walk(limit)) == expected, limit
+
+
+def test_cursor_round_trips_and_is_url_safe() -> None:
+    conversation = _conversation("x", minutes=3)
+    text = _cursor_for(conversation)
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", text)
+    cursor = Cursor.decode(text)
+    assert (cursor.updated_at, cursor.created_at, cursor.id) == (
+        conversation.updated_at,
+        conversation.created_at,
+        conversation.id,
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "not a cursor",
+        "!!!!",
+        "a" * 121,
+        "abcd",  # valid base64, not a cursor
+        "e30",  # "{}"
+    ],
+)
+def test_cursor_decode_refuses_text_it_did_not_issue(text: str) -> None:
+    with pytest.raises(InvalidCursor):
+        Cursor.decode(text)
+
+
+def test_cursor_decode_refuses_altered_and_non_canonical_spellings() -> None:
+    text = _cursor_for(_conversation("x"))
+    other = "A" if text[10] != "A" else "B"
+    with pytest.raises(InvalidCursor):
+        Cursor.decode(text[:10] + other + text[11:])  # one character changed
+    with pytest.raises(InvalidCursor):
+        Cursor.decode(text[:-4])  # cut short
+    with pytest.raises(InvalidCursor):
+        Cursor.decode(text + "=")  # padding is not part of the issued text
+    import base64
+
+    raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)).decode()
+    updated, created, ident = raw.split("|")
+    for variant in (
+        f"{updated}|{created}|{ident.upper()}",  # same id, other spelling
+        f"{updated}+00:00|{created}|{ident}",  # a time zone
+        f"{updated}|{created}|{ident}|x",  # extra field
+        f"{updated}|{created}|{ident.replace('-', '')}",  # unhyphenated id
+    ):
+        spelled = base64.urlsafe_b64encode(variant.encode()).decode().rstrip("=")
+        with pytest.raises(InvalidCursor):
+            Cursor.decode(spelled)
+
+
+@pytest.mark.parametrize("cursor", ["", "garbage!", "a" * 121, "e30", "%00"])
+def test_list_rejects_a_bad_cursor_with_422_before_touching_the_database(
+    use_session: Any, cursor: str
+) -> None:
+    session = FakeSession(results=[[]])
+    res = use_session(session).get("/v1/conversations", params={"cursor": cursor})
+    assert res.status_code == 422
+    assert _is_error(res.json(), "validation_error")
+    assert set(res.json()) == {"error", "trace_id"}  # the value is never echoed back
+    assert session.statements == []
+
+
+def test_a_cursor_is_not_logged_whether_valid_or_refused(
+    use_session: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _cursor_for(_conversation("x"))
+    client = use_session(FakeSession(results=[[]]))
+    assert client.get("/v1/conversations", params={"cursor": text}).status_code == 200
+    bad = "refused" + "Q" * 20
+    assert client.get("/v1/conversations", params={"cursor": bad}).status_code == 422
+    out = capsys.readouterr().out
+    assert "conversations listed" in out  # logs do reach stdout, so the absence below means it
+    assert text not in out
+    assert bad not in out
 
 
 # --- GET /v1/conversations/{id} ----------------------------------------------------------

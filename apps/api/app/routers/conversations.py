@@ -85,7 +85,13 @@ class ConversationSummary(BaseModel):
 
 class ConversationList(BaseModel):
     items: list[ConversationSummary]
-    count: int
+    count: int = Field(description="How many conversations are on this page.")
+    next_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Opaque. Pass it as `cursor` to get the next page; `null` when this is the last one."
+        ),
+    )
 
 
 # A citation covers at most this many chunks (retrieval returns a handful).
@@ -180,16 +186,44 @@ async def create_conversation(
     return ConversationOut.model_validate(conversation, from_attributes=True)
 
 
+def _check_cursor(value: str) -> str:
+    """Refuse text that is not a cursor this api issued (a `ValueError` becomes a 422)."""
+    try:
+        repo.Cursor.decode(value)
+    except repo.InvalidCursor:
+        raise ValueError("not a cursor") from None
+    return value
+
+
 @router.get("", response_model=ConversationList)
 async def list_conversations(
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=repo.MAX_LIST_LIMIT)] = repo.DEFAULT_LIST_LIMIT,
+    cursor: Annotated[
+        str | None,
+        Query(
+            max_length=repo.MAX_CURSOR_LENGTH,
+            description="The `next_cursor` of the previous page. Omit it for the first page.",
+        ),
+        AfterValidator(lambda v: v if v is None else _check_cursor(v)),
+    ] = None,
 ) -> ConversationList:
-    """The most recently updated conversations, newest first."""
-    rows = await repo.list_conversations(session, limit)
-    items = [ConversationSummary.model_validate(row, from_attributes=True) for row in rows]
-    _log.info("conversations listed", count=len(items))
-    return ConversationList(items=items, count=len(items))
+    """The most recently updated conversations, newest first, one page at a time.
+
+    A malformed or altered `cursor` is `422 validation_error`.
+    """
+    after = repo.Cursor.decode(cursor) if cursor is not None else None
+    page = await repo.list_conversations(session, limit, after)
+    items = [
+        ConversationSummary.model_validate(row, from_attributes=True) for row in page.conversations
+    ]
+    _log.info(
+        "conversations listed",
+        count=len(items),
+        paged=cursor is not None,
+        more=page.next_cursor is not None,
+    )
+    return ConversationList(items=items, count=len(items), next_cursor=page.next_cursor)
 
 
 @router.get(

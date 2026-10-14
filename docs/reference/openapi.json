@@ -126,6 +126,7 @@
       "ConversationList": {
         "properties": {
           "count": {
+            "description": "How many conversations are on this page.",
             "title": "Count",
             "type": "integer"
           },
@@ -135,6 +136,18 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque. Pass it as `cursor` to get the next page; `null` when this is the last one.",
+            "title": "Next Cursor"
           }
         },
         "required": ["items", "count"],
@@ -322,7 +335,7 @@
     },
     "/v1/conversations": {
       "get": {
-        "description": "The most recently updated conversations, newest first.",
+        "description": "The most recently updated conversations, newest first, one page at a time.\n\nA malformed or altered `cursor` is `422 validation_error`.",
         "operationId": "list_conversations_v1_conversations_get",
         "parameters": [
           {
@@ -335,6 +348,25 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "The `next_cursor` of the previous page. Omit it for the first page.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` of the previous page. Omit it for the first page.",
+              "title": "Cursor"
             }
           }
         ],
