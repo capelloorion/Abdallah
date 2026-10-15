@@ -10,6 +10,11 @@ interface Props {
   autoFocus?: boolean;
   /** The longest question, in characters (code points, as the api counts). Shows `n / max`. */
   maxChars?: number;
+  /**
+   * Put a question back in the box (it was refused before anything happened, e.g. rate-limited).
+   * Applied once per `nonce`, and only if the person has not typed something else meanwhile.
+   */
+  restore?: { text: string; nonce: number } | null;
 }
 
 /** Textarea + send button. Enter sends, Shift+Enter inserts a newline. */
@@ -19,6 +24,7 @@ export function MessageInput({
   placeholder = 'Ask a question…',
   autoFocus = false,
   maxChars,
+  restore = null,
 }: Props) {
   const [text, setText] = useState('');
   const counterId = useId();
@@ -35,6 +41,13 @@ export function MessageInput({
     }
     wasDisabled.current = disabled;
   }, [disabled]);
+  useEffect(() => {
+    // Only into an empty box: what the person typed meanwhile is never overwritten. (The box is
+    // disabled while an answer is pending, so it is empty when a refusal comes back; a draft
+    // feature that changes that must also decide where the refused question goes.)
+    if (restore) setText((current) => (current.trim() === '' ? restore.text : current));
+    // once per nonce: a re-render with the same restore must not overwrite what is typed later
+  }, [restore?.nonce]);
   const trimmed = text.trim();
   // Code points, like the api. A huge paste is over the limit whatever it is, so skip the walk.
   const count =

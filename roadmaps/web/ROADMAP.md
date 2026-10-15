@@ -333,7 +333,7 @@ Only item 3.1 — switching to the generated types and a real run — depends on
 
 ### 4.3 — Tell the person when they are rate-limited
 
-- **status:** todo
+- **status:** done
 - **depends_on:** [4.2]
 - **layers:** [ui]
 - **acceptance:**
@@ -341,8 +341,15 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - a `Retry-After` value that is missing, not a number, negative or absurdly large is ignored; the message never shows server text
   - the same applies to a failed **+ New chat** and a failed list load
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - `just test` — web: all pass (new: `src/lib/user-messages.test.ts`, and the `Retry-After`, `restore`, `ChatPanel` and `ChatWorkspace` rate-limit cases)
+  - `pnpm -C apps/web typecheck` clean; `pnpm -C apps/web build` succeeds
+  - by hand, mock mode with `MOCK_UPSTREAM=true` and `RATE_LIMIT_ASKS_PER_MINUTE=2` in `apps/web/.env.local`, `pnpm -C apps/web dev`, http://localhost:3000/chat, open a chat: ask two questions, then a third → an amber line "Too many requests. Try again in N seconds." (N ≤ 60) with a trace id; the third question is back in the input box and is not in the thread; after N seconds press **Send** → it goes through and the notice disappears
+  - type something new in the box before the refusal comes back (for example while a slow answer streams and the next question is refused): what you typed is kept
+  - with `RATE_LIMIT_CREATES_PER_MINUTE=1`, press **+ New chat** twice → the second shows the same "Too many requests…" wording in the list column instead of "Could not start a new chat (rate_limited)"
 - **needs_human:**
   - none
 - **notes:**
   - 2026-10-12 — planned. The red line today shows only the error code and the trace id (web 2.1); a rate limit is something the person can act on, so it gets its own wording. The trace id stays visible for support.
+  - 2026-10-12 — started by Claude
+  - 2026-10-12 — implemented; awaiting test. Review run: `code-reviewer` (no blockers; fixed: a `rate_limited` frame after streamed text keeps the partial answer, a `429` with a non-JSON body is still a rate limit, the notice clears after the wait; noted in a comment: the restore only fills an empty box, which the disabled-while-busy input guarantees today). Files: `apps/web/src/lib/user-messages.ts` + test (new), `apps/web/src/lib/chat-client.ts` (`StreamError.retryAfterSeconds`, `readFailure`), `apps/web/src/components/chat/{ChatPanel,MessageInput,ChatWorkspace}.tsx` + tests, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.12.0 → 0.13.0. Decisions: a refused question leaves the thread (nothing was stored or answered) instead of staying beside an error line, so resending does not duplicate it; the notice is amber and sits under the thread; `Retry-After` is accepted from 1 to 3,600 seconds as a plain number only (an HTTP date is ignored).
+  - 2026-10-15 — confirmed by Abdallah Ahmed ("do all the required steps").

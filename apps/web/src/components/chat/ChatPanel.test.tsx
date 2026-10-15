@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sseFrame, sseStreamFromFrames } from '@/lib/sse';
@@ -311,5 +311,123 @@ describe('<ChatPanel /> limits and cancellation', () => {
     unmount();
     render(<ChatPanel endpoint={ENDPOINT} maxQuestionChars={50} />);
     expect(screen.getByTestId('question-counter')).toHaveTextContent('0 / 50');
+  });
+
+  describe('when the question is rate-limited', () => {
+    const limited = (headers: Record<string, string> = { 'retry-after': '5' }) =>
+      new Response(JSON.stringify({ error: 'rate_limited', trace_id: TRACE }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', ...headers },
+      });
+
+    it('says so in plain words with the wait and the trace id, and keeps the question for another try', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(limited());
+      await ask('which port?');
+      const notice = await screen.findByTestId('rate-limited');
+      expect(notice).toHaveTextContent('Too many requests. Try again in 5 seconds.');
+      expect(notice).toHaveTextContent(`Trace id: ${TRACE}`);
+      expect(notice).not.toHaveTextContent('rate_limited'); // no bare code
+      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('which port?'));
+      expect(screen.getByLabelText('Message')).toBeEnabled();
+    });
+
+    it('leaves neither the refused question nor an empty answer in the thread', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(limited());
+      await ask('which port?');
+      await screen.findByTestId('rate-limited');
+      const thread = screen.getByTestId('chat-empty');
+      expect(thread).toBeInTheDocument();
+      expect(screen.queryByText('which port?', { selector: 'li span' })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Streaming')).not.toBeInTheDocument();
+    });
+
+    it('says "in a moment" when there is no usable Retry-After', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(limited({ 'retry-after': 'soon' }));
+      await ask('q');
+      expect(await screen.findByTestId('rate-limited')).toHaveTextContent(
+        'Too many requests. Try again in a moment.',
+      );
+    });
+
+    it('clears the notice on the next try, and the same question goes through when the limit has passed', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(limited())
+        .mockResolvedValueOnce(
+          stream([sseFrame('token', { text: 'Port 8000' }), sseFrame('done', { citations: [] })]),
+        );
+      const user = await ask('which port?');
+      await screen.findByTestId('rate-limited');
+      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('which port?'));
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(screen.getByText('Port 8000')).toBeInTheDocument());
+      expect(screen.queryByTestId('rate-limited')).not.toBeInTheDocument();
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(JSON.parse((fetchSpy.mock.calls[1][1] as RequestInit).body as string)).toEqual({
+        question: 'which port?',
+      });
+    });
+
+    it('does not use the notice for other failures', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('x', { status: 502 }));
+      await ask('q');
+      expect(await screen.findByRole('alert')).toHaveTextContent('upstream_error');
+      expect(screen.queryByTestId('rate-limited')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('a rate_limited frame inside the stream, and the notice timer', () => {
+    it('keeps a partial answer (and does not refill the input) when the frame arrives after text', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        stream([
+          sseFrame('token', { text: 'Half an answer' }),
+          sseFrame('error', { error_kind: 'rate_limited' }),
+        ]),
+      );
+      await ask('which port?');
+      expect(await screen.findByText('Half an answer')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'The answer is incomplete (rate_limited).',
+      );
+      expect(screen.queryByTestId('rate-limited')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Message')).toHaveValue('');
+      expect(screen.getByText('which port?')).toBeInTheDocument(); // still in the thread
+    });
+
+    it('treats a 429 with a body that is not ours as a rate limit', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('<html>Too Many Requests</html>', {
+          status: 429,
+          headers: { 'content-type': 'text/html', 'retry-after': '4' },
+        }),
+      );
+      await ask('q');
+      expect(await screen.findByTestId('rate-limited')).toHaveTextContent(
+        'Too many requests. Try again in 4 seconds.',
+      );
+    });
+
+    it('removes the notice once the wait has passed', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response(JSON.stringify({ error: 'rate_limited', trace_id: TRACE }), {
+            status: 429,
+            headers: { 'content-type': 'application/json', 'retry-after': '3' },
+          }),
+        );
+        await ask('q');
+        expect(await screen.findByTestId('rate-limited')).toBeInTheDocument();
+        await vi.advanceTimersByTimeAsync(2_900);
+        expect(screen.getByTestId('rate-limited')).toBeInTheDocument();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(200);
+        });
+        expect(screen.queryByTestId('rate-limited')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('Message')).toHaveValue('q'); // the question stays for the retry
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

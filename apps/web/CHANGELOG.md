@@ -7,6 +7,24 @@ The two services version independently.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-12
+
+### Added
+
+- **A rate-limited request now says so in plain words.** When a question or **+ New chat** is answered `429 rate_limited` (from the BFF, web 4.2, or from the api's stream cap, api 5.2) the chat shows "Too many requests. Try again in N seconds." — N from the response's `Retry-After` when it is a sane whole number (1–3,600), "in a moment" otherwise, and "about N minutes" from 90 seconds up — with the trace id for support, instead of a bare error code. A failed list load for the same reason reads the same way (and still offers **Try again**).
+- **The question is not lost.** A refused question is taken out of the thread (nothing happened to it, and no empty answer is left behind) and put back in the input so it can be sent again; it is put back only if the box is empty, so what the person typed meanwhile is never overwritten, and only once per refusal. The notice clears on the next attempt.
+- `src/lib/user-messages.ts`: `parseRetryAfter` (ignores a missing, zero, negative, fractional, huge, signed, exponent or HTTP-date value) and `rateLimitedMessage`; the wording is built from that number only, never from server text. `StreamError` carries `retryAfterSeconds`, which `readFailure` reads for every failed HTTP response; `MessageInput` takes `restore`.
+
+### Hardening from review
+
+- A `rate_limited` error frame that arrives AFTER part of the answer has streamed no longer removes the exchange: the partial answer is kept and marked incomplete, and the input is not refilled (only a refusal before any of the answer is a clean refusal).
+- A `429` is a rate limit by its status even when its body is not ours (a gateway's HTML page, an empty body, JSON without a code); it keeps its `Retry-After`. Other 4xx are unchanged.
+- The notice disappears once the quoted wait has passed.
+
+### Tests
+
+- `user-messages.test.ts`, `Retry-After` cases in `chat-client.test.ts` and `conversations-client.test.ts`, `restore` cases in `MessageInput.test.tsx`, the rate-limited flow in `ChatPanel.test.tsx` (wording with and without a wait, trace id, the question back in the box and resent, nothing left in the thread, other failures unchanged) and `ChatWorkspace.test.tsx` (new chat, list with Try again). Each guard was proven by removing it and watching a test fail.
+
 ## [0.12.0] — 2026-10-12
 
 ### Added

@@ -570,4 +570,56 @@ describe('<ChatWorkspace />', () => {
       expect(chatsButton()).toHaveFocus();
     });
   });
+
+  describe('rate-limited requests', () => {
+    const limited = (retryAfter = '9') =>
+      new Response(JSON.stringify({ error: 'rate_limited', trace_id: TRACE }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': retryAfter },
+      });
+
+    it('tells the person to wait when + New chat is refused', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [CREATE]: () => limited(),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByRole('list');
+      await user.click(screen.getByRole('button', { name: '+ New chat' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('Too many requests. Try again in 9 seconds.');
+      expect(alert).toHaveTextContent(`Trace id: ${TRACE}`);
+      expect(alert).not.toHaveTextContent('rate_limited');
+      expect(alert).not.toHaveTextContent('Could not start a new chat');
+    });
+
+    it('says the same when the list cannot be loaded for that reason, and Try again still works', async () => {
+      let calls = 0;
+      routes({
+        [LIST]: () => (++calls === 1 ? limited('2') : json({ items: SUMMARIES, count: 2 })),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Too many requests. Try again in 2 seconds.',
+      );
+      await user.click(screen.getByRole('button', { name: 'Try again' }));
+      expect(await screen.findByRole('list')).toBeInTheDocument();
+    });
+
+    it('keeps the generic wording for other failures', async () => {
+      routes({
+        [LIST]: () => json({ items: SUMMARIES, count: 2 }),
+        [CREATE]: () => err('upstream_error', 502),
+      });
+      const user = userEvent.setup();
+      render(<ChatWorkspace />);
+      await screen.findByRole('list');
+      await user.click(screen.getByRole('button', { name: '+ New chat' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Could not start a new chat (upstream_error).',
+      );
+    });
+  });
 });
