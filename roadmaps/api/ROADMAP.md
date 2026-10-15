@@ -461,18 +461,24 @@ human steps listed on each item.
 
 ### 5.7 — Operator purge runbook for stored conversations
 
-- **status:** todo
+- **status:** done
 - **depends_on:** []
 - **layers:** [docs]
 - **acceptance:**
   - `docs/operations/runbooks/` has a runbook (via the `runbook-writer` skill) for removing a conversation or message from Azure SQL by an operator: who may do it, the exact SQL with bound values, how to record what was removed and who asked (counts, never content), and the follow-up for a pasted credential (rotate it; deleting a row does not undo the exposure)
   - the runbook states the retention decision and backup retention once they are known
 - **how_to_test:**
-  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+  - read `docs/operations/runbooks/purge-stored-conversations.md` end to end as the operator would: who may do it, finding the row without content in logs, the approval step, the two delete blocks (whole conversation; one message), the count check with rollback, the incident-note fields (counts and ids only), the table of copies left behind, and the credential-rotation step
+  - check the SQL against the schema: `messages` (`id`, `conversation_id`, `role`, `content`, `citations`, `token_count`, `created_at`) and `conversations` (`id`, `title`, `created_at`, `updated_at`) in `apps/api/app/models/conversation.py`; the FK is `NO ACTION`, so messages are deleted first
+  - on a non-production database, run the whole-conversation block once with a throwaway conversation and `@expected_messages` set correctly (commits), then with it set wrong (rolls back, error 50001, nothing deleted)
+  - the runbook is listed in `docs/operations/runbooks/README.md`; no code changed, so no tests or version bump
 - **needs_human:**
-  - the team names who owns erasure requests, picks a retention period (or "forever") and learns the platform's real backup retention (threat model R3, P3, Q1/Q4)
+  - the team names who owns erasure requests and the admin group that may run it, picks a retention period (or "forever") and learns the platform's real backup retention (threat model R3, P3, Q1/Q4/Q8); the runbook's _Decisions_ table is left as "not decided" until then, and the second half of acceptance ("states the retention decision and backup retention once they are known") stays open
+  - a person who can run SQL on a non-production database should do the dry run in `how_to_test`; I could not (no database from here)
 - **notes:**
   - 2026-10-06 — planned from the shared-conversations threat model (P3). Documentation only; there is deliberately no delete endpoint (ADR-0014).
+  - 2026-10-14 — started by Claude, written; awaiting test. Files: `docs/operations/runbooks/purge-stored-conversations.md` (new), `docs/operations/runbooks/README.md`. Facts checked against the code: tables and columns, `NO ACTION` FK, the title is the first question (`title_from_question`), the chat page has no per-conversation URL (so rows are found by title and time). Not done here: the threat model's P3 line and checklist are team-owned and were not edited.
+  - 2026-10-15 — confirmed by Abdallah Ahmed ("done"). The acceptance line about stating retention stays open until the team decides (needs_human).
 
 ### 5.8 — Optional: warn on secrets in questions
 
