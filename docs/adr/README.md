@@ -28,5 +28,6 @@ recur and agents re-invent decisions on every change.
 | 0013 | Knowledge-base corpus: repo `docs/`, baked into the api image when deployed     | Proposed           | 2026-10-06 |
 | 0014 | Conversations are shared (no owner) until auth lands                            | Accepted           | 2026-10-06 |
 | 0015 | Re-indexing via `POST /v1/admin/ingest` (202, background, single-flight)        | Proposed           | 2026-10-06 |
+| 0016 | Where retrieved text goes in the prompt (system slot vs. human message)         | Proposed           | 2026-10-15 |
 
 <!-- Append new rows above; newest last. -->

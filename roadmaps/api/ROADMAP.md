@@ -423,7 +423,7 @@ human steps listed on each item.
 
 ### 5.5 — Decide where retrieved text goes in the prompt
 
-- **status:** todo
+- **status:** blocked
 - **depends_on:** [2.2]
 - **layers:** [ai, docs]
 - **acceptance:**
@@ -435,6 +435,7 @@ human steps listed on each item.
   - the team decides; the security review of api 2.2 flagged that rule 70 and the review checklist say retrieved text must never reach the model as a system message, while the template graph does exactly that
 - **notes:**
   - 2026-10-06 — planned from the api 2.2 security review (finding on `app/ai/graph.py`). Propose the ADR with the `write-adr` skill; do not change the graph before the decision.
+  - 2026-10-15 — BLOCKED on the team's decision. Claude drafted [ADR-0016](../../docs/adr/0016-retrieved-text-placement-in-the-prompt.md) (Proposed) with options A (keep the `{context}` slot, fix rule 70), B (separate human-role context message, recommended) and C (tool-role message), and the work each needs. Nothing in `graph.py`, the prompt, the evals or rule 70 was changed. Unblock: the team sets the ADR to Accepted with an option; then this item becomes `todo` and `implement-next` does the consequences listed in the ADR. Also noticed: rule 70 contradicts itself (allows the `{context}` slot, then forbids retrieved text as a `SystemMessage`).
 
 ### 5.6 — Page the conversation list
 
