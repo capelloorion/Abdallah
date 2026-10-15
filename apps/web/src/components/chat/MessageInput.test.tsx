@@ -156,4 +156,40 @@ describe('<MessageInput />', () => {
     await user.keyboard('{Backspace}');
     expect(status).toHaveTextContent('');
   });
+
+  describe('putting a refused question back', () => {
+    it('fills the empty box with the question, once per nonce', async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<MessageInput onSubmit={vi.fn()} restore={null} />);
+      expect(screen.getByLabelText('Message')).toHaveValue('');
+      rerender(<MessageInput onSubmit={vi.fn()} restore={{ text: 'my question', nonce: 1 }} />);
+      expect(screen.getByLabelText('Message')).toHaveValue('my question');
+      // the person edits it; a re-render with the SAME restore must not bring the old text back
+      await user.clear(screen.getByLabelText('Message'));
+      await user.type(screen.getByLabelText('Message'), 'edited');
+      rerender(<MessageInput onSubmit={vi.fn()} restore={{ text: 'my question', nonce: 1 }} />);
+      expect(screen.getByLabelText('Message')).toHaveValue('edited');
+    });
+
+    it('does not overwrite what the person has typed since', async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<MessageInput onSubmit={vi.fn()} restore={null} />);
+      await user.type(screen.getByLabelText('Message'), 'something new');
+      rerender(<MessageInput onSubmit={vi.fn()} restore={{ text: 'old question', nonce: 1 }} />);
+      expect(screen.getByLabelText('Message')).toHaveValue('something new');
+    });
+
+    it('restores again for a new nonce, and ignores a repeat of the same one', async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(
+        <MessageInput onSubmit={vi.fn()} restore={{ text: 'first', nonce: 1 }} />,
+      );
+      expect(screen.getByLabelText('Message')).toHaveValue('first');
+      await user.clear(screen.getByLabelText('Message'));
+      rerender(<MessageInput onSubmit={vi.fn()} restore={{ text: 'first', nonce: 1 }} />);
+      expect(screen.getByLabelText('Message')).toHaveValue(''); // same nonce: nothing happens
+      rerender(<MessageInput onSubmit={vi.fn()} restore={{ text: 'second', nonce: 2 }} />);
+      expect(screen.getByLabelText('Message')).toHaveValue('second');
+    });
+  });
 });

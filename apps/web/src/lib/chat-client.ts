@@ -1,4 +1,5 @@
 import { readSseStream } from '@/lib/sse';
+import { parseRetryAfter } from '@/lib/user-messages';
 
 /**
  * Browser-side client for a streamed assistant answer (same-origin BFF only — the BFF rule).
@@ -21,6 +22,8 @@ export interface StreamError {
   code: string;
   /** The request's trace id, when the server sent a valid one. */
   traceId?: string;
+  /** `Retry-After` in whole seconds, when the failed response carried a sane one. */
+  retryAfterSeconds?: number;
 }
 
 export interface StreamHandlers {
@@ -149,7 +152,7 @@ export async function readBoundedText(
  * trace id comes from the body, else the `x-trace-id` header. Anything unreadable falls back to
  * a code by status class — callers should key on the class, not the exact code.
  */
-export async function readFailure(res: Response): Promise<StreamError> {
+async function readFailureBody(res: Response): Promise<StreamError> {
   const headerTrace = validTrace(res.headers.get('x-trace-id'));
   const byClass = res.status >= 500 ? 'upstream_error' : 'request_rejected';
   const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
@@ -178,6 +181,20 @@ export async function readFailure(res: Response): Promise<StreamError> {
   }
   void res.body?.cancel().catch(() => undefined);
   return { code: byClass, traceId: headerTrace };
+}
+
+/**
+ * Why a response failed: its error code and trace id (from the body, else the header) and, when
+ * it carried a sane `Retry-After`, the wait in seconds. Never any server text.
+ */
+export async function readFailure(res: Response): Promise<StreamError> {
+  const retryAfterSeconds = parseRetryAfter(res.headers.get('retry-after'));
+  let failure = await readFailureBody(res);
+  // A 429 is a rate limit by its status, even when the body is not ours (a gateway's own page).
+  if (res.status === 429 && failure.code === 'request_rejected') {
+    failure = { ...failure, code: 'rate_limited' };
+  }
+  return retryAfterSeconds === undefined ? failure : { ...failure, retryAfterSeconds };
 }
 
 /**

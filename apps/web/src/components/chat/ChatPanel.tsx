@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { askStream } from '@/lib/chat-client';
 import { MAX_QUESTION_CHARS } from '@/lib/conversation-limits';
 import { ChatThread } from './ChatThread';
+import { rateLimitedMessage } from '@/lib/user-messages';
 import { MessageInput } from './MessageInput';
 import type { ChatMessage } from './types';
 
@@ -47,19 +48,34 @@ export function ChatPanel({
   const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // A question refused before anything happened (rate limit): a notice, and the question back in
+  // the box. Neither the question nor an empty answer is left in the thread.
+  const [notice, setNotice] = useState<{ retryAfterSeconds?: number; traceId?: string } | null>(
+    null,
+  );
+  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
 
   // Leaving the page cancels the request, which lets the api stop the model call.
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // "Try again in 5 seconds" must not still be on screen long after those seconds have passed.
+  useEffect(() => {
+    if (!notice?.retryAfterSeconds) return;
+    const timer = setTimeout(() => setNotice(null), notice.retryAfterSeconds * 1000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
   async function send(question: string) {
+    setNotice(null);
     const assistantId = nextId();
+    const userId = nextId();
     // Every callback patches ITS OWN assistant message, never "the last one", so a late callback
     // from an earlier request can never land on a newer answer.
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
     setMessages((prev) => [
       ...prev,
-      { id: nextId(), role: 'user', text: question },
+      { id: userId, role: 'user', text: question },
       { id: assistantId, role: 'assistant', text: '', pending: true },
     ]);
     setBusy(true);
@@ -68,14 +84,21 @@ export function ChatPanel({
     abortRef.current = controller;
     let received = 0;
     let capped = false;
+    // Something of the answer has arrived (sources or text): then the exchange is not a clean refusal
+    // and must stay in the thread, whatever the error is.
+    let sawContent = false;
     await askStream(
       endpoint,
       question,
       {
         // The sources block appears as soon as the `sources` frame arrives, before any token.
-        onSources: (citations) => patch((m) => ({ ...m, citations })),
+        onSources: (citations) => {
+          if (citations.length) sawContent = true;
+          patch((m) => ({ ...m, citations }));
+        },
         onToken: (text) => {
           if (capped) return;
+          if (text) sawContent = true;
           received += text.length;
           if (received > MAX_ANSWER_CHARS) {
             capped = true;
@@ -94,8 +117,15 @@ export function ChatPanel({
           }));
           if (!capped) onAnswered?.(question);
         },
-        onError: ({ code, traceId }) => {
-          if (code !== 'aborted') {
+        onError: ({ code, traceId, retryAfterSeconds }) => {
+          if (code === 'rate_limited' && !sawContent) {
+            // Refused before any of the answer: nothing happened, so the question goes back to the
+            // input. (A `rate_limited` frame after text has streamed takes the normal path below:
+            // the partial answer is kept and marked incomplete.)
+            setMessages((prev) => prev.filter((m) => m.id !== assistantId && m.id !== userId));
+            setNotice({ retryAfterSeconds, traceId });
+            setRestore((r) => ({ text: question, nonce: (r?.nonce ?? 0) + 1 }));
+          } else if (code !== 'aborted') {
             patch((m) => ({ ...m, pending: false, error: code, traceId }));
           } else if (!capped) {
             // Cancelled (leaving the page, sending again): a half answer must not look finished,
@@ -121,11 +151,27 @@ export function ChatPanel({
       <div className="min-h-[16rem] rounded-2xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
         <ChatThread messages={messages} />
       </div>
+      {notice ? (
+        <p
+          role="alert"
+          data-testid="rate-limited"
+          className="text-xs text-amber-700 dark:text-amber-300"
+        >
+          {rateLimitedMessage(notice.retryAfterSeconds)}
+          {notice.traceId ? (
+            <>
+              {' '}
+              Trace id: <code className="break-all font-mono">{notice.traceId}</code>.
+            </>
+          ) : null}
+        </p>
+      ) : null}
       <MessageInput
         onSubmit={send}
         disabled={busy}
         autoFocus={autoFocus}
         maxChars={maxQuestionChars}
+        restore={restore}
       />
     </section>
   );

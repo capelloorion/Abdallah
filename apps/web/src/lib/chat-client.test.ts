@@ -421,4 +421,72 @@ describe('askStream — hardening', () => {
     expect(h.onError).toHaveBeenCalledExactlyOnceWith({ code: 'stream_error', traceId: undefined });
     expect(h.onToken).not.toHaveBeenCalled();
   });
+
+  describe('Retry-After on a failed response', () => {
+    const failed = (headers: Record<string, string>) =>
+      new Response(JSON.stringify({ error: 'rate_limited', trace_id: '0eb01' + 'a'.repeat(27) }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', ...headers },
+      });
+    const run = async (res: Response) => {
+      let error: unknown = null;
+      await askStream(
+        '/api/v1/conversations/x/ask/stream',
+        'q',
+        { onSources: () => {}, onToken: () => {}, onDone: () => {}, onError: (e) => (error = e) },
+        { fetchImpl: (async () => res) as unknown as typeof fetch },
+      );
+      return error;
+    };
+
+    it('hands over a sane Retry-After with the error code', async () => {
+      expect(await run(failed({ 'retry-after': '12' }))).toMatchObject({
+        code: 'rate_limited',
+        retryAfterSeconds: 12,
+      });
+    });
+
+    it.each(['', '0', '-1', 'soon', 'Wed, 21 Oct 2026 07:28:00 GMT', '99999'])(
+      'leaves out an unusable Retry-After (%j)',
+      async (value) => {
+        const error = (await run(failed(value === '' ? {} : { 'retry-after': value }))) as Record<
+          string,
+          unknown
+        >;
+        expect(error.code).toBe('rate_limited');
+        expect('retryAfterSeconds' in error).toBe(false);
+      },
+    );
+  });
+
+  describe('a 429 whose body is not ours', () => {
+    const run = async (res: Response) => {
+      let error: unknown = null;
+      await askStream(
+        '/api/v1/conversations/x/ask/stream',
+        'q',
+        { onSources: () => {}, onToken: () => {}, onDone: () => {}, onError: (e) => (error = e) },
+        { fetchImpl: (async () => res) as unknown as typeof fetch },
+      );
+      return error;
+    };
+
+    it.each([
+      ['an HTML page', 'text/html', '<html>Too Many Requests</html>'],
+      ['an empty body', '', ''],
+      ['JSON without a code', 'application/json', '{"message":"slow down"}'],
+    ])('is still a rate limit, with its Retry-After, for %s', async (_label, type, body) => {
+      const res = new Response(body, {
+        status: 429,
+        headers: { ...(type ? { 'content-type': type } : {}), 'retry-after': '8' },
+      });
+      expect(await run(res)).toMatchObject({ code: 'rate_limited', retryAfterSeconds: 8 });
+    });
+
+    it('does not turn other 4xx into a rate limit', async () => {
+      expect(await run(new Response('x', { status: 403 }))).toMatchObject({
+        code: 'request_rejected',
+      });
+    });
+  });
 });

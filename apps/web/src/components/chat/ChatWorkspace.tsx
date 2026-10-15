@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { sanitizeText, type StreamError } from '@/lib/chat-client';
 import { DEFAULT_CONVERSATION_TITLE, MAX_TITLE_UNITS } from '@/lib/conversation-limits';
+import { rateLimitedMessage } from '@/lib/user-messages';
 import {
   askEndpoint,
   createConversation,
@@ -23,7 +24,9 @@ function Failure({
 }: Readonly<{ what: string; error: StreamError; onRetry?: () => void }>) {
   return (
     <p role="alert" className="text-xs text-red-600 dark:text-red-400">
-      {what} ({error.code}).
+      {error.code === 'rate_limited'
+        ? rateLimitedMessage(error.retryAfterSeconds)
+        : `${what} (${error.code}).`}
       {error.traceId ? (
         <>
           {' '}

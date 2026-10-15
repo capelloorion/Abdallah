@@ -298,4 +298,27 @@ describe('askEndpoint', () => {
   it('is the conversation same-origin ask-stream path', () => {
     expect(askEndpoint(ID.toUpperCase())).toBe(`/api/v1/conversations/${ID}/ask/stream`);
   });
+
+  describe('Retry-After on a refused request', () => {
+    it('is passed on with the error for a 429', async () => {
+      const res = new Response(JSON.stringify({ error: 'rate_limited', trace_id: TRACE }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '7' },
+      });
+      const result = await createConversation(undefined, fetchReturning(res));
+      expect(result).toEqual({
+        ok: false,
+        error: { code: 'rate_limited', traceId: TRACE, retryAfterSeconds: 7 },
+      });
+    });
+
+    it('is left out when it is not a sane number', async () => {
+      const res = new Response(JSON.stringify({ error: 'rate_limited', trace_id: TRACE }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': 'never' },
+      });
+      const result = await listConversations(undefined, fetchReturning(res));
+      expect(result).toEqual({ ok: false, error: { code: 'rate_limited', traceId: TRACE } });
+    });
+  });
 });
