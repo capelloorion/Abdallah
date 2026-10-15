@@ -353,3 +353,37 @@ Only item 3.1 — switching to the generated types and a real run — depends on
   - 2026-10-12 — started by Claude
   - 2026-10-12 — implemented; awaiting test. Review run: `code-reviewer` (no blockers; fixed: a `rate_limited` frame after streamed text keeps the partial answer, a `429` with a non-JSON body is still a rate limit, the notice clears after the wait; noted in a comment: the restore only fills an empty box, which the disabled-while-busy input guarantees today). Files: `apps/web/src/lib/user-messages.ts` + test (new), `apps/web/src/lib/chat-client.ts` (`StreamError.retryAfterSeconds`, `readFailure`), `apps/web/src/components/chat/{ChatPanel,MessageInput,ChatWorkspace}.tsx` + tests, `apps/web/CLAUDE.md`, `apps/web/CHANGELOG.md`, version 0.12.0 → 0.13.0. Decisions: a refused question leaves the thread (nothing was stored or answered) instead of staying beside an error line, so resending does not duplicate it; the notice is amber and sits under the thread; `Retry-After` is accepted from 1 to 3,600 seconds as a plain number only (an HTTP date is ignored).
   - 2026-10-15 — confirmed by Abdallah Ahmed ("do all the required steps").
+
+## Phase 5 — Follow-ups from the api
+
+### 5.1 — Number the Sources block to match the answer's `[n]` markers
+
+- **status:** todo
+- **depends_on:** [3.1, api:5.4]
+- **layers:** [ui]
+- **acceptance:**
+  - each source in the Sources block shows the chunk numbers it covers (for example `[1, 3]`) taken from the citation's `chunks`, so an inline `[2]` in the answer can be matched to its source
+  - `chunks` is untrusted text from storage: shape-checked in `parseCitations` (whole numbers from 1 to 50, unique, ascending, at most 50), anything else dropped; a missing or `null` `chunks` (a chat stored before api 0.11.0) shows the source exactly as today, with no numbers and no error
+  - the live stream (`sources` and `done` frames) and a conversation read from storage show the same numbers; fixtures and `contract.test.ts` carry `chunks`
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - look at a real answer once with a real model and index (api 5.4 needs the migration, Azure settings and an ingested index)
+- **notes:**
+  - 2026-10-15 — planned from the api 5.4 hand-over (`apps/web/src/lib/api-types.ts` already has `chunks?: number[] | null`; `ChatThread.tsx` renders the Sources list). Numbers only; do not turn the markers inside the answer text into links in this item.
+
+### 5.2 — Load more than the newest 50 chats
+
+- **status:** todo
+- **depends_on:** [3.1, api:5.6]
+- **layers:** [bff, ui]
+- **acceptance:**
+  - `GET /api/v1/conversations` validates an optional `cursor` (a string of at most 120 characters from `A-Z a-z 0-9 _ -`) and forwards only that and the validated `limit`; anything else is a `422 validation_error` from the BFF before the api is called; the response's `next_cursor` is passed through
+  - the chat list shows a "Load more" control while `next_cursor` is a string, appends the next page without repeating a conversation (matching by id), and hides the control on the last page; a failed page shows a retry in the list, not an error in the thread
+  - a new or renamed-by-activity chat that jumps to the top is not duplicated when a later page is appended; `MOCK_UPSTREAM` fixtures page the same way
+- **how_to_test:**
+  - _(filled in by `implement-next` when the item reaches `awaiting-test`)_
+- **needs_human:**
+  - look at the list with more than one page of chats against a real api and database
+- **notes:**
+  - 2026-10-15 — planned from the api 5.6 hand-over (`next_cursor` and `cursor` are in `api-types.ts`). The cursor is opaque: the web never builds or reads one.
