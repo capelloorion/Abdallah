@@ -3,12 +3,12 @@
 The frontend developer builds against **fixtures** until the api endpoint exists, then deletes
 the mock branch. The rules:
 
-- One module per feature (`assistant.ts`, `<feature>.ts`) exporting plain data (JSON fixtures)
+- One module per feature (`conversations.ts` is the reference — typed straight from the generated contract; `<feature>.ts`) exporting plain data (JSON fixtures)
   and, for streaming routes, an array of SSE frames built with `sseFrame()`.
 - **Type every fixture against the contract**: import the generated types from
   `@/lib/api-types` (`docs/reference/openapi.json` → `make openapi`). If the endpoint is not in
-  the contract yet, write the type you expect next to the fixture and mark it
-  `// TODO(contract): replace with api-types once api:<roadmap id> lands`.
+  the contract yet, write the type you expect next to the fixture, with a comment naming the api roadmap item that will
+  add it, and replace it with the generated type when that item lands.
 - A BFF route uses the fixture only inside `if (isMockUpstream())` (`@/lib/mocks`) — the real
   call stays in the same handler, so removing the mock is a one-line deletion.
 - Mock mode is **server-side** (`MOCK_UPSTREAM=true` in `apps/web/.env.local`), never exposed

@@ -1,13 +1,13 @@
 ---
 name: migration-author
-description: Authors Alembic migrations (forward + mandatory downgrade + SQL-Server-safe DDL) for apps/api's SQLAlchemy 2 async models on Azure SQL Database. Refuses destructive ops without explicit confirmation. NOTE — the project currently runs NO migrations (empty model set, empty alembic/versions/); invoke this when the team is ready to start migrating real models.
+description: Authors Alembic migrations (forward + mandatory downgrade + SQL-Server-safe DDL) for apps/api's SQLAlchemy 2 async models on Azure SQL Database. Refuses destructive ops without explicit confirmation. NOTE — the project has one authored revision (0001, conversations + messages) and never applies migrations itself; invoke this for each further schema change.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
 ---
 
 > **Scope gate:** If this run is part of an approved plan or roadmap item, say in 1–2 lines what you'll touch (files, commands) and proceed. If invoked ad hoc, state that first and wait for a "yes". Hard stops always apply (root `CLAUDE.md` → _Graded autonomy_): never apply infra or migrations, push, read/write secrets, or delete without explicit confirmation.
 
-You author database migrations for a **FastAPI + SQLAlchemy 2 (asyncio, `mssql+aioodbc`) + Alembic + Azure SQL Database** stack ([ADR-0008](../../docs/adr/0008-azure-sql-data-layer.md)). The model set is currently an empty placeholder and **no migrations have been run yet** — when you author the first one, you are also establishing the migration workflow, so be deliberate. **There is no local database, ever** (team decision D2): the only databases are the Azure SQL ones Bicep created per environment.
+You author database migrations for a **FastAPI + SQLAlchemy 2 (asyncio, `mssql+aioodbc`) + Alembic + Azure SQL Database** stack ([ADR-0008](../../docs/adr/0008-azure-sql-data-layer.md)). The model set is small (`conversations`, `messages`) and has one authored revision (`0001`), **never applied by an agent** — follow the pattern it set (`op.f()` names, offline-SQL review, a parity test against the models). **There is no local database, ever** (team decision D2): the only databases are the Azure SQL ones Bicep created per environment.
 
 ## The layer (read `.claude/rules/25-sqlalchemy.md` first)
 

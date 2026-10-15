@@ -1,27 +1,23 @@
-# CLAUDE.md — AI Accelerator
+# CLAUDE.md — Team Assistant
 
 Project-wide constitution for Claude. Follow the rules below on every task unless I explicitly
 override them. This file is the **map**, not the manual: load the deeper docs (per-app
 `CLAUDE.md`, `README.md`, `.claude/rules/`, `docs/`) **on demand** — don't bloat this file or
 assume it's the only source of truth.
 
-**What it is:** the **AI Accelerator** — a brandless starter/accelerator monorepo that the
-**Diriyah Company AI team** uses to speed up its AI projects, built and maintained by **Orion
-Digital Solutions** for the Diriyah Company. Teams clone it, rename it with `/rename-project`
-(see [`README.md`](README.md) → _Using this template_), and build the project's AI features
-on it; every
-project-identity string is a placeholder (`AI Accelerator` / `ai-accelerator` / `@ai-accelerator/*`),
+**What it is:** the **Team Assistant** — a chat assistant for the **Diriyah Company AI team**,
+built by **Orion Digital Solutions** on the **AI Accelerator** starter (identity: `Team Assistant`
+/ `team-assistant` / `@team-assistant/*`),
 targeting Azure deployment via **Bicep** on a **shared, cloud-team-owned platform** (Foundry, Container Apps Environment, Container Registry, AI Search service pre-exist per environment; this project deploys only its own container apps, database, storage, Key Vault and Search index — ADR-0012; see [`README.md`](README.md) → _Scope & delivery status_). The repo is a polyglot
 monorepo of two independent services — `apps/web` (Next.js BFF + UI) and `apps/api`
 (FastAPI, the **sole backend** — ADR-0003) — wired with **end-to-end `trace_id` propagation**
 and **Azure Monitor / OpenTelemetry** observability in both. The browser only talks to the `web`
 BFF, which calls `api` server-side; the chain `web → api` carries one `x-trace-id`
 unchanged. **SQLAlchemy 2 async + Alembic** on **Azure SQL Database** via `mssql+aioodbc`
-(ADR-0008; empty model set, lazy engine, no migrations run, **never a local database**) plus an
+(ADR-0008; two models — conversations, messages — lazy engine, migrations never run by an agent, **never a local database**) plus an
 optional **read-only** second engine for an external database. Currently a working baseline
-(ping/health) with no business features and no auth. The living architecture is
-[`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md); the template's own
-backlog is [`docs/template-roadmap.md`](docs/template-roadmap.md).
+(ping/health) plus the `/v1/conversations` chat-history endpoints; no AI answers yet and no auth. The living architecture is
+[`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md).
 
 > **⚖️ Graded autonomy (governs this entire `.claude/` setup):** approval is given at the level
 > of a **plan or roadmap item**, not at every step. Once the user approves an item (or says "go"
@@ -41,7 +37,7 @@ backlog is [`docs/template-roadmap.md`](docs/template-roadmap.md).
 | Monorepo           | Independent packages — **no pnpm workspace, no Turborepo**; per-app lockfiles & Dockerfiles                                                                                                                                                                                                                                                                                                                                                                                                                 | `.claude/rules/00-architecture.md`                            |
 | `apps/web`         | Next.js **16.2.6** App Router, **BFF** (:3000, origin `0eb0`); Tailwind v4 + chat components, SSE pass-through, `MOCK_UPSTREAM` fixtures typed from the OpenAPI contract, RTL component tests (ADR-0010/0011)                                                                                                                                                                                                                                                                                               | `apps/web/CLAUDE.md`, `.claude/rules/30-nextjs.md`            |
 | `apps/api`         | Python **3.14** + FastAPI, **uv** (:8000, origin `0c70`) — the sole backend                                                                                                                                                                                                                                                                                                                                                                                                                                 | `apps/api/CLAUDE.md`, `.claude/rules/35-fastapi.md`           |
-| ORM / DB           | SQLAlchemy **2.0.54** async + aioodbc **0.5** / pyodbc **5.3** (ODBC Driver 18) + Alembic **1.20** → **Azure SQL Database**, **never local** (no container; DB created by the use-case Bicep deployment; no migrations run; `migrate.yml` applies). Optional read-only external engine (`EXTERNAL_DATABASE_URL`). Origin `0a71` of the former NestJS api stays retired — ADR-0005                                                                                                                           | `.claude/rules/25-sqlalchemy.md`, ADR-0008, `README.md`       |
+| ORM / DB           | SQLAlchemy **2.0.54** async + aioodbc **0.5** / pyodbc **5.3** (ODBC Driver 18) + Alembic **1.20** → **Azure SQL Database**, **never local** (no container; DB created by the use-case Bicep deployment; migrations are never run by an agent; `migrate.yml` applies). Optional read-only external engine (`EXTERNAL_DATABASE_URL`). Origin `0a71` of the former NestJS api stays retired — ADR-0005                                                                                                        | `.claude/rules/25-sqlalchemy.md`, ADR-0008, `README.md`       |
 | Runtime / pkg mgrs | Node **24**, pnpm **11.5.2** (web), uv (api), TypeScript **5.9**                                                                                                                                                                                                                                                                                                                                                                                                                                            | `.nvmrc`, each `package.json`/`pyproject.toml`                |
 | Tracing            | `x-trace-id` = origin(4)+env(1)+random(27); ALS (Node) / contextvars (Python)                                                                                                                                                                                                                                                                                                                                                                                                                               | `.claude/rules/60-observability.md`, `README.md`              |
 | Observability      | OTel → Azure Monitor; pino (Node) / structlog (Python); **fail-safe degraded mode**                                                                                                                                                                                                                                                                                                                                                                                                                         | `.claude/rules/60-observability.md`                           |
@@ -55,7 +51,6 @@ backlog is [`docs/template-roadmap.md`](docs/template-roadmap.md).
 - **`docs/architecture/ARCHITECTURE.md`** — the living architecture: **Part A** template baseline (template-owned, never edited in a project), **Part B** project architecture (team-maintained; read it before planning, only _propose_ edits — ADR-0006).
 - **`docs/design/`** — the team's design inputs (DB design, external systems, wireframes); planning never invents what is missing here — it asks.
 - **`roadmaps/`** — **the plan of record** (`roadmaps/README.md` = the item schema; `roadmaps/<api|web|infra>/ROADMAP.md` = the items). State lives here, not in chat: `/start` reads it, `/plan-roadmap` writes it, `/implement-next` executes one item and stops at `awaiting-test`.
-- **`docs/template-roadmap.md`** — the template's own backlog and the team's locked decisions (D1–D8).
 - **`apps/<svc>/CLAUDE.md`** — per-service layout, conventions, commands, gotchas (auto-loads in that app).
 - **`README.md`** — full architecture, run instructions, the trace_id schema, observability, the SQLAlchemy + Alembic database section, env reference.
 - **`.claude/rules/*.md`** — path-scoped conventions that auto-load when you edit matching files.
@@ -69,11 +64,11 @@ These orient you fast; they are **not** the one-and-only place — read/search t
 **Agents** (`.claude/agents/`, invoke by name or via a command):
 `code-reviewer` (diff review before a PR) · `security-reviewer` (OWASP + BFF/secrets/HTTP/SQLAlchemy/CORS/containers) · `test-writer` (writes tests; Vitest / pytest) · `migration-author` (Alembic revisions; autogenerate needs a real DB, never applies) · `observability-instrumenter` (trace_id + logs + spans) · `adr-writer` (decision → ADR) · `dependency-updater` (safe per-package bumps) · `threat-modeler` (design-time STRIDE) · `incident-responder` (live triage from Azure Monitor signals).
 
-**Workflow skills** (the day-to-day loop, in order): `setup-dev-env` (fresh machine → every required tool checked via `scripts/doctor.sh`, installed via winget/brew/apt on a "yes", with numbered manual steps when an install fails) · `init-project` (fresh clone → named project, landing zone, roadmaps; supersedes `rename-project` alone) · `architecture-review` (Part B + design vs the baseline; proposes, never rewrites) · `plan-roadmap <layer>` (writes `roadmaps/<layer>/ROADMAP.md`) · `implement-next <layer> [id]` (one item end-to-end → `awaiting-test`, "How to test", "Needs a human") · `start` (session briefing) · `git-flow` (branch/commit/PR; push needs a yes) · `infra-scaffold` (a use-case-tier Bicep change, build/lint only).
+**Workflow skills** (the day-to-day loop, in order): `setup-dev-env` (fresh machine → every required tool checked via `scripts/doctor.sh`, installed via winget/brew/apt on a "yes", with numbered manual steps when an install fails) · `architecture-review` (Part B + design vs the baseline; proposes, never rewrites) · `plan-roadmap <layer>` (writes `roadmaps/<layer>/ROADMAP.md`) · `implement-next <layer> [id]` (one item end-to-end → `awaiting-test`, "How to test", "Needs a human") · `start` (session briefing) · `git-flow` (branch/commit/PR; push needs a yes) · `infra-scaffold` (a use-case-tier Bicep change, build/lint only).
 
-**Skills** (`.claude/skills/`, auto-discovered): `rename-project` · `feature-scaffold` (targets `web` · `api` · `ai` · `rag`) · `security-review` · `write-adr` · `write-migration` · `lsp-refactor` · `docs-lookup` (verify library APIs via live docs — a hard preference) · `release-notes-writer` · `runbook-writer` · `db-introspector`.
+**Skills** (`.claude/skills/`, auto-discovered): `feature-scaffold` (targets `web` · `api` · `ai` · `rag`) · `security-review` · `write-adr` · `write-migration` · `lsp-refactor` · `docs-lookup` (verify library APIs via live docs — a hard preference) · `release-notes-writer` · `runbook-writer` · `db-introspector`.
 
-**Commands** (`.claude/commands/`): `/setup-dev-env` · `/init-project` · `/start` · `/architecture-review` · `/plan-roadmap` · `/implement-next` · `/git-flow` · `/infra-scaffold` · `/rename-project` · `/scaffold-feature` · `/code-review` · `/security-review` · `/write-adr` · `/write-migration` · `/observability`.
+**Commands** (`.claude/commands/`): `/setup-dev-env` · `/start` · `/architecture-review` · `/plan-roadmap` · `/implement-next` · `/git-flow` · `/infra-scaffold` · `/scaffold-feature` · `/code-review` · `/security-review` · `/write-adr` · `/write-migration` · `/observability`.
 
 ---
 

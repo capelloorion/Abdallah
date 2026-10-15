@@ -2,10 +2,16 @@
 
 Wire format (one ``event:`` + one JSON ``data:`` line per event, blank-line terminated):
 
-    event: sources   data: {"sources": ["docs/a.md"], "count": 3}   — after retrieval
+    event: sources   data: {"citations": [{"title": "A", "path": "docs/a.md", "chunks": [1, 3]}],
+                                    "count": 3}
+                                                                    — after retrieval
     event: token     data: {"text": "partial "}                     — per model token chunk
-    event: done      data: {"sources": [...], "input_tokens": 12, "output_tokens": 40}
+    event: done      data: {"citations": [...], "input_tokens": 12, "output_tokens": 40}
     event: error     data: {"error_kind": "timeout"}                — then the stream ends
+
+``citations`` are unique by path, in retrieval order, each with the numbers (``chunks``) of the
+retrieved chunks it covers (the ``[n]`` markers in the answer); ``count`` is the number of retrieved
+chunks.
 
 Use from a ``/v1`` route::
 
@@ -27,10 +33,11 @@ from typing import Any
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessageChunk, AnyMessage, HumanMessage
 
-from app.ai.graph import GraphState, _message_text, unique_sources
+from app.ai.graph import Citation, GraphState, _message_text, citations_for
 from app.ai.telemetry import error_kind, extract_usage
 
 SSE_MEDIA_TYPE = "text/event-stream"
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
@@ -38,31 +45,33 @@ def sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def stream_answer(
+async def stream_events(
     graph: Any,
     question: str,
     *,
     history: list[AnyMessage] | None = None,
     config: dict[str, Any] | None = None,
-) -> AsyncIterator[str]:
-    """Run the graph and yield SSE frames: ``sources`` → ``token``* → ``done`` (or ``error``)."""
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """Run the graph and yield ``(event, data)`` pairs: ``sources`` → ``token``* → ``done`` (or
+    ``error``). The typed form of ``stream_answer``: a route that must act between events (store the
+    answer before ``done``) consumes this and formats the frames itself with ``sse``.
+    """
     inputs: GraphState = {
         "messages": [*(history or []), HumanMessage(content=question)],
         "context": [],
     }
-    sources: list[str] = []
+    citations: list[Citation] = []
     input_tokens: int | None = None
     output_tokens: int | None = None
+    stream = graph.astream(inputs, config, stream_mode=["updates", "messages"])
     try:
-        async for mode, payload in graph.astream(
-            inputs, config, stream_mode=["updates", "messages"]
-        ):
+        async for mode, payload in stream:
             if mode == "updates":
                 for node, update in (payload or {}).items():
                     if node == "retrieve":
                         context = (update or {}).get("context", []) or []
-                        sources = unique_sources(context)
-                        yield sse("sources", {"sources": sources, "count": len(context)})
+                        citations = citations_for(context)
+                        yield "sources", {"citations": citations, "count": len(context)}
                     elif node == "answer":
                         for message in (update or {}).get("messages", []) or []:
                             i, o = extract_usage(message)
@@ -77,14 +86,36 @@ async def stream_answer(
                 ):
                     text = _message_text(chunk)
                     if text:
-                        yield sse("token", {"text": text})
+                        yield "token", {"text": text}
     except Exception as exc:  # noqa: BLE001 - the frame carries a bounded kind, never the message
-        yield sse("error", {"error_kind": error_kind(exc)})
+        yield "error", {"error_kind": error_kind(exc)}
         return
-    yield sse(
+    finally:
+        # Close the graph run now (not at garbage collection) so a consumer that stops early,
+        # or a failure, also stops the model and search work behind it.
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    yield (
         "done",
-        {"sources": sources, "input_tokens": input_tokens, "output_tokens": output_tokens},
+        {
+            "citations": citations,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        },
     )
+
+
+async def stream_answer(
+    graph: Any,
+    question: str,
+    *,
+    history: list[AnyMessage] | None = None,
+    config: dict[str, Any] | None = None,
+) -> AsyncIterator[str]:
+    """Run the graph and yield SSE frames: ``sources`` → ``token``* → ``done`` (or ``error``)."""
+    async for event, data in stream_events(graph, question, history=history, config=config):
+        yield sse(event, data)
 
 
 def sse_response(frames: AsyncIterator[str]) -> StreamingResponse:
@@ -92,5 +123,5 @@ def sse_response(frames: AsyncIterator[str]) -> StreamingResponse:
     return StreamingResponse(
         frames,
         media_type=SSE_MEDIA_TYPE,
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers=SSE_HEADERS,
     )

@@ -28,9 +28,11 @@ class _Span:
 class _Tracer:
     def __init__(self) -> None:
         self.spans: list[tuple[str, _Span]] = []
+        self.span_kwargs: list[dict[str, Any]] = []
 
-    def start_as_current_span(self, name: str) -> _Span:
+    def start_as_current_span(self, name: str, **kwargs: Any) -> _Span:
         span = _Span()
+        self.span_kwargs.append(kwargs)
         self.spans.append((name, span))
         return span
 
@@ -108,3 +110,49 @@ def test_prompts_are_files_with_placeholders() -> None:
         load_prompt("does-not-exist")
     with pytest.raises(KeyError):
         render_prompt("system")  # missing placeholder must fail loudly
+
+
+def test_model_call_span_never_records_the_exception_text(tracer: _Tracer, events) -> None:
+    """An upstream error message can quote the question; the span keeps only the bounded kind."""
+    with pytest.raises(RuntimeError):
+        with telemetry.model_call_span("gpt-4o-mini"):
+            raise RuntimeError("rejected: QUESTION-CANARY-77")
+    assert tracer.span_kwargs == [{"record_exception": False, "set_status_on_exception": False}]
+    _, span = tracer.spans[0]
+    assert "CANARY" not in repr(span.attributes) and "CANARY" not in repr(events)
+
+
+def test_record_ask_outcome_uses_only_bounded_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    added: list[tuple[int, dict[str, Any]]] = []
+
+    class _Counter:
+        def add(self, value: int, attributes: dict[str, Any]) -> None:
+            added.append((value, attributes))
+
+    class _Meter:
+        def create_counter(self, name: str, **kwargs: Any) -> _Counter:
+            assert name == "team-assistant.ai.ask.outcomes"
+            return _Counter()
+
+    monkeypatch.setattr(telemetry, "get_meter", lambda _scope: _Meter())
+    telemetry._reset_for_tests()
+    telemetry.record_ask_outcome("ask_stream", "cut")
+    telemetry.record_ask_outcome("ask", "ok")
+    # Anything outside the fixed sets (an id, a question, a message) is dropped, never a series.
+    telemetry.record_ask_outcome("ask", "QUESTION-CANARY-77")
+    telemetry.record_ask_outcome("/v1/conversations/42/ask", "ok")
+    assert added == [
+        (1, {"route_class": "ask_stream", "outcome": "cut"}),
+        (1, {"route_class": "ask", "outcome": "ok"}),
+    ]
+    telemetry._reset_for_tests()
+
+
+def test_record_ask_outcome_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(_scope: str) -> Any:
+        raise RuntimeError("no meter")
+
+    monkeypatch.setattr(telemetry, "get_meter", broken)
+    telemetry._reset_for_tests()
+    telemetry.record_ask_outcome("ask", "ok")  # must not raise into the request path
+    telemetry._reset_for_tests()

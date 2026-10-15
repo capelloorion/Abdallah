@@ -7,10 +7,10 @@ What is recorded — and what is NOT:
   ``gen_ai.request.model`` (the deployment), ``gen_ai.usage.input_tokens`` /
   ``gen_ai.usage.output_tokens``, plus our ``trace_id``.
 - Metrics (bounded attributes only — a deployment name is a short, fixed set):
-  ``ai-accelerator.ai.model.duration`` (ms, by deployment/outcome),
-  ``ai-accelerator.ai.model.tokens`` (by deployment/token_type),
-  ``ai-accelerator.ai.model.failures`` (by deployment/error_kind),
-  ``ai-accelerator.ai.retrieval.duration`` (ms, by outcome).
+  ``team-assistant.ai.model.duration`` (ms, by deployment/outcome),
+  ``team-assistant.ai.model.tokens`` (by deployment/token_type),
+  ``team-assistant.ai.model.failures`` (by deployment/error_kind),
+  ``team-assistant.ai.retrieval.duration`` (ms, by outcome).
 - One custom event per model call (``ai.model_call``) with the same bounded attributes.
 - **Never** the prompt, the completion, retrieved text, or user identifiers — in spans, logs,
   metrics or events. PII in chat history is a data-classification concern for the project;
@@ -36,12 +36,28 @@ from app.metrics import get_meter
 from app.tracing import get_trace_id
 
 GEN_AI_SYSTEM = "azure_openai"
-_TRACER_NAME = "ai-accelerator.ai"
+_TRACER_NAME = "team-assistant.ai"
 
 _model_duration: Histogram | None = None
 _model_tokens: Counter | None = None
 _model_failures: Counter | None = None
 _retrieval_duration: Histogram | None = None
+_ask_outcomes: Counter | None = None
+
+# The only values the ask-outcome metric may carry (rule 60: bounded attributes).
+ASK_ROUTE_CLASSES = frozenset({"ask", "ask_stream"})
+ASK_OUTCOMES = frozenset(
+    {
+        "ok",
+        "cut",
+        "ai_unavailable",
+        "timeout",
+        "client_disconnected",
+        "error",
+        "rejected",
+        "write_stalled",
+    }
+)
 
 
 def _instruments() -> tuple[Histogram, Counter, Counter, Histogram]:
@@ -49,19 +65,19 @@ def _instruments() -> tuple[Histogram, Counter, Counter, Histogram]:
     meter = get_meter("ai")
     if _model_duration is None:
         _model_duration = meter.create_histogram(
-            "ai-accelerator.ai.model.duration", unit="ms", description="Model call duration"
+            "team-assistant.ai.model.duration", unit="ms", description="Model call duration"
         )
     if _model_tokens is None:
         _model_tokens = meter.create_counter(
-            "ai-accelerator.ai.model.tokens", unit="1", description="Tokens by type"
+            "team-assistant.ai.model.tokens", unit="1", description="Tokens by type"
         )
     if _model_failures is None:
         _model_failures = meter.create_counter(
-            "ai-accelerator.ai.model.failures", unit="1", description="Failed model calls"
+            "team-assistant.ai.model.failures", unit="1", description="Failed model calls"
         )
     if _retrieval_duration is None:
         _retrieval_duration = meter.create_histogram(
-            "ai-accelerator.ai.retrieval.duration", unit="ms", description="Retrieval duration"
+            "team-assistant.ai.retrieval.duration", unit="ms", description="Retrieval duration"
         )
     return _model_duration, _model_tokens, _model_failures, _retrieval_duration
 
@@ -155,7 +171,11 @@ def model_call_span(deployment: str, operation: str = "chat") -> Iterator[ModelC
     """
     recorder = ModelCallRecorder(deployment=deployment, operation=operation)
     tracer = trace.get_tracer(_TRACER_NAME)
-    with tracer.start_as_current_span(f"gen_ai.{operation}") as span:
+    # No exception event and no "Type: message" status text on the span: an upstream error
+    # message can quote the request (a question, a search query). ``ai.error_kind`` is bounded.
+    with tracer.start_as_current_span(
+        f"gen_ai.{operation}", record_exception=False, set_status_on_exception=False
+    ) as span:
         try:
             span.set_attribute("gen_ai.system", GEN_AI_SYSTEM)
             span.set_attribute("gen_ai.operation.name", operation)
@@ -185,7 +205,26 @@ def record_retrieval(duration_ms: float, outcome: str, hits: int | None = None) 
     )
 
 
+def record_ask_outcome(route_class: str, outcome: str) -> None:
+    """One finished (or failed) ask: ``team-assistant.ai.ask.outcomes`` by ``route_class`` and
+    ``outcome``. Both are checked against fixed sets, so no id, question or message can become a
+    series. Best-effort: never raises into the request path.
+    """
+    global _ask_outcomes
+    try:
+        if route_class not in ASK_ROUTE_CLASSES or outcome not in ASK_OUTCOMES:
+            return
+        if _ask_outcomes is None:
+            _ask_outcomes = get_meter("ai").create_counter(
+                "team-assistant.ai.ask.outcomes", unit="1", description="Ask requests by outcome"
+            )
+        _ask_outcomes.add(1, {"route_class": route_class, "outcome": outcome})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _reset_for_tests() -> None:
     """TEST-ONLY: drop cached instruments."""
-    global _model_duration, _model_tokens, _model_failures, _retrieval_duration
+    global _model_duration, _model_tokens, _model_failures, _retrieval_duration, _ask_outcomes
     _model_duration = _model_tokens = _model_failures = _retrieval_duration = None
+    _ask_outcomes = None

@@ -1,12 +1,12 @@
-# AI Accelerator — Documentation
+# Team Assistant — Documentation
 
-The documentation hub for the **AI Accelerator** — the brandless starter template built by
+The documentation hub for the **Team Assistant** — the brandless starter template built by
 [Orion Digital Solutions](https://www.orion360.com/) for the [Diriyah Company](https://www.diriyahcompany.sa/en/) AI team. The root [`README.md`](../README.md) is the
 quick orientation (what the template is, how to run it); everything deeper lives here, organized
 by what you're trying to do.
 
 > The template ships a cross-service **foundation** (BFF + trace propagation + observability) —
-> no business features, no auth. Docs describe that foundation; each AI project built on it
+> next to no business features (only `/v1/conversations`), no auth. Docs describe that foundation; each AI project built on it
 > extends both the platform and these docs.
 
 ## Start here
@@ -16,7 +16,6 @@ by what you're trying to do.
 | Set up and run the stack for the first time | [Getting started](getting-started.md)                                                                          |
 | Understand how the system is designed       | [Architecture](architecture/README.md) — start with the living [ARCHITECTURE.md](architecture/ARCHITECTURE.md) |
 | Record the project's design before planning | [Design inputs](design/README.md) — DB design, external systems, wireframes                                    |
-| See what the template itself still lacks    | [Template roadmap](template-roadmap.md)                                                                        |
 | Build, test, and ship a change              | [Development](development/README.md)                                                                           |
 | Look up an endpoint, env var, or command    | [Reference](reference/README.md)                                                                               |
 | Deploy, monitor, or handle an incident      | [Operations](operations/README.md)                                                                             |
@@ -38,8 +37,6 @@ by what you're trying to do.
 - **[Design inputs](design/README.md)** — the team-authored
   [database design](design/db-design.md), [external systems](design/external-systems.md), and
   [wireframes](design/wireframes/README.md) that planning starts from.
-- **[Template roadmap](template-roadmap.md)** — the template's own backlog (what it still needs
-  to carry a full AI project), with the team's locked decisions and open questions.
 - **[Development](development/README.md)** — the [workflow](development/workflow.md) (CI,
   versioning, ADRs, definition of done),
   [adding a feature end-to-end](development/adding-a-feature.md),

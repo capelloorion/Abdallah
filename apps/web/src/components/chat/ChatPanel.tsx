@@ -1,32 +1,62 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { askStream } from '@/lib/chat-client';
+import { MAX_QUESTION_CHARS } from '@/lib/conversation-limits';
 import { ChatThread } from './ChatThread';
 import { MessageInput } from './MessageInput';
 import type { ChatMessage } from './types';
 
 interface Props {
-  /** Same-origin SSE route, e.g. `/api/v1/assistant/ask/stream` (the BFF rule: never the api). */
+  /** Same-origin SSE route, e.g. `/api/v1/conversations/{id}/ask/stream` (the BFF rule: never the api). */
   endpoint: string;
   title?: string;
+  /** Messages already stored for this conversation (already parsed and sanitized). */
+  initialMessages?: ChatMessage[];
+  /** Focus the input on mount. */
+  autoFocus?: boolean;
+  /** The heading level of the title; the page owns the h1 when it embeds the panel. */
+  headingLevel?: 1 | 2;
+  /** The longest question the input accepts, in characters. */
+  maxQuestionChars?: number;
+  /** Called with the question once its answer is complete (`done`) — not on an error or a cancel. */
+  onAnswered?: (question: string) => void;
 }
 
+/**
+ * The most answer text one reply may accumulate in the browser. A runaway or hostile stream is
+ * stopped here (the answer is kept and marked incomplete) instead of growing the page forever.
+ */
+export const MAX_ANSWER_CHARS = 100_000;
+
 let counter = 0;
-const nextId = () => `m${++counter}`;
+/** Live ids start with `live-`; stored ids are `stored-<n>` (conversations-client), so they never collide. */
+const nextId = () => `live-${++counter}`;
 
 /** A complete streaming chat surface: thread + input, wired to a BFF SSE route. */
-export function ChatPanel({ endpoint, title = 'Assistant' }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function ChatPanel({
+  endpoint,
+  title = 'Assistant',
+  initialMessages,
+  autoFocus = false,
+  headingLevel = 1,
+  maxQuestionChars = MAX_QUESTION_CHARS,
+  onAnswered,
+}: Props) {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
+  const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  function patchLast(patch: (m: ChatMessage) => ChatMessage) {
-    setMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? patch(m) : m)));
-  }
+  // Leaving the page cancels the request, which lets the api stop the model call.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   async function send(question: string) {
     const assistantId = nextId();
+    // Every callback patches ITS OWN assistant message, never "the last one", so a late callback
+    // from an earlier request can never land on a newer answer.
+    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
     setMessages((prev) => [
       ...prev,
       { id: nextId(), role: 'user', text: question },
@@ -34,33 +64,69 @@ export function ChatPanel({ endpoint, title = 'Assistant' }: Props) {
     ]);
     setBusy(true);
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let received = 0;
+    let capped = false;
     await askStream(
       endpoint,
       question,
       {
-        onSources: (sources) => patchLast((m) => ({ ...m, sources })),
-        onToken: (text) => patchLast((m) => ({ ...m, text: m.text + text })),
-        onDone: ({ sources }) =>
-          patchLast((m) => ({
+        // The sources block appears as soon as the `sources` frame arrives, before any token.
+        onSources: (citations) => patch((m) => ({ ...m, citations })),
+        onToken: (text) => {
+          if (capped) return;
+          received += text.length;
+          if (received > MAX_ANSWER_CHARS) {
+            capped = true;
+            controller.abort(); // stop reading; the abort handler below keeps the error we set
+            patch((m) => ({ ...m, pending: false, error: 'answer_too_long' }));
+            return;
+          }
+          patch((m) => ({ ...m, text: m.text + text }));
+        },
+        onDone: ({ citations }) => {
+          patch((m) => ({
             ...m,
             pending: false,
-            sources: sources.length ? sources : m.sources,
-          })),
-        onError: (kind) => patchLast((m) => ({ ...m, pending: false, error: kind })),
+            // a `done` frame may list no citations of its own: keep the ones from `sources`
+            citations: citations.length ? citations : m.citations,
+          }));
+          if (!capped) onAnswered?.(question);
+        },
+        onError: ({ code, traceId }) => {
+          if (code !== 'aborted') {
+            patch((m) => ({ ...m, pending: false, error: code, traceId }));
+          } else if (!capped) {
+            // Cancelled (leaving the page, sending again): a half answer must not look finished,
+            // and an empty placeholder is just removed.
+            setMessages((prev) =>
+              prev.flatMap((m) => {
+                if (m.id !== assistantId) return [m];
+                if (!m.text && !m.citations?.length) return [];
+                return [{ ...m, pending: false, error: m.error ?? 'aborted' }];
+              }),
+            );
+          }
+        },
       },
-      { signal: abortRef.current.signal },
+      { signal: controller.signal },
     );
     setBusy(false);
   }
 
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-col gap-4" aria-label={title}>
-      <h1 className="text-xl font-semibold">{title}</h1>
+      <Heading className="text-xl font-semibold">{title}</Heading>
       <div className="min-h-[16rem] rounded-2xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
         <ChatThread messages={messages} />
       </div>
-      <MessageInput onSubmit={send} disabled={busy} />
+      <MessageInput
+        onSubmit={send}
+        disabled={busy}
+        autoFocus={autoFocus}
+        maxChars={maxQuestionChars}
+      />
     </section>
   );
 }

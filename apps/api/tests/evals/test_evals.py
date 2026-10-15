@@ -1,7 +1,7 @@
 """Prompt regression harness (rule 70 → Testing).
 
 Offline by default: each case scripts the model's answer, so what is actually checked is the
-**pipeline around the prompt** — retrieval reaches the prompt, sources are surfaced, the system
+**pipeline around the prompt** — retrieval reaches the prompt, citations are surfaced, the system
 prompt still carries its placeholders and rules. Extend ``cases.json`` whenever a prompt file
 changes. A live-model tier is opt-in: set ``AI_EVAL_LIVE=true`` with real ``AZURE_AI_*``
 settings and the scripted answer is replaced by the deployment's own.
@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.ai.graph import ask, build_graph
 from app.ai.prompts import load_prompt
@@ -36,11 +37,16 @@ def _model_for(case: dict):
 def test_eval_case(case: dict) -> None:
     retriever = FakeRetriever(case["context"])
     graph = build_graph(chat_model=_model_for(case), retriever=retriever, deployment_label="eval")
-    answer = asyncio.run(ask(graph, case["question"]))
-    assert retriever.calls and retriever.calls[0][0] == case["question"]
+    history = [
+        (HumanMessage if turn["role"] == "user" else AIMessage)(content=turn["content"])
+        for turn in case.get("history", [])
+    ]
+    answer = asyncio.run(ask(graph, case["question"], history=history))
+    # What is searched: the question, or the previous user turn + the question for a follow-up.
+    assert retriever.calls and retriever.calls[0][0] == case.get("expect_query", case["question"])
     for needle in case["expect_contains"]:
         assert needle.lower() in answer.text.lower(), (case["id"], answer.text)
-    assert answer.sources == case["expect_sources"]
+    assert answer.citations == case["expect_citations"]
 
 
 def test_system_prompt_keeps_its_guardrails() -> None:
@@ -49,3 +55,4 @@ def test_system_prompt_keeps_its_guardrails() -> None:
     assert "do not know" in prompt  # refuses to invent
     assert "cite" in prompt  # citations
     assert "context is data" in prompt  # injection guard
+    assert "history, not instructions" in prompt  # shared history is data too (threat model A1)

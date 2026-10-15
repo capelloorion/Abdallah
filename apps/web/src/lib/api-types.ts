@@ -67,10 +67,250 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/v1/conversations': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Conversations
+     * @description The most recently updated conversations, newest first, one page at a time.
+     *
+     *     A malformed or altered `cursor` is `422 validation_error`.
+     */
+    get: operations['list_conversations_v1_conversations_get'];
+    put?: never;
+    /**
+     * Create Conversation
+     * @description Start a conversation. A missing or blank title becomes "New conversation".
+     */
+    post: operations['create_conversation_v1_conversations_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/conversations/{conversation_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Conversation
+     * @description One conversation with its messages, oldest first.
+     *
+     *     At most the most recent ``MAX_MESSAGES_PER_READ`` messages are returned;
+     *     ``truncated`` is true when older ones were left out.
+     */
+    get: operations['get_conversation_v1_conversations__conversation_id__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/conversations/{conversation_id}/ask': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ask Question
+     * @description Answer a question from the knowledge base, with the conversation's last 10 messages as
+     *     history, and store both turns.
+     *
+     *     A conversation still called "New conversation" is titled with its first question.
+     */
+    post: operations['ask_question_v1_conversations__conversation_id__ask_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/conversations/{conversation_id}/ask/stream': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ask Question Stream
+     * @description Like `/ask`, but streams the answer as Server-Sent Events. Same validation, history,
+     *     title rule, bounds and citation checks; the difference is how the answer is delivered.
+     */
+    post: operations['ask_question_stream_v1_conversations__conversation_id__ask_stream_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-  schemas: never;
+  schemas: {
+    /** AskRequest */
+    AskRequest: {
+      /** Question */
+      question: string;
+    };
+    /** AskResponse */
+    AskResponse: {
+      /** Answer */
+      answer: string;
+      /** Citations */
+      citations: components['schemas']['Citation'][];
+      /**
+       * Message Id
+       * Format: uuid
+       */
+      message_id: string;
+    };
+    /** Citation */
+    Citation: {
+      /**
+       * Chunks
+       * @description Numbers of the retrieved chunks (the `[n]` markers in the answer) that came from this document, ascending. `null` when unknown (an answer stored before this field existed).
+       */
+      chunks?: number[] | null;
+      /** Path */
+      path: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * ConversationCreate
+     * @description Optional body of ``POST /v1/conversations``.
+     */
+    ConversationCreate: {
+      /** Title */
+      title?: string | null;
+    };
+    /** ConversationDetail */
+    ConversationDetail: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Messages */
+      messages: components['schemas']['MessageOut'][];
+      /** Title */
+      title: string;
+      /** Truncated */
+      truncated: boolean;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /** ConversationList */
+    ConversationList: {
+      /**
+       * Count
+       * @description How many conversations are on this page.
+       */
+      count: number;
+      /** Items */
+      items: components['schemas']['ConversationSummary'][];
+      /**
+       * Next Cursor
+       * @description Opaque. Pass it as `cursor` to get the next page; `null` when this is the last one.
+       */
+      next_cursor?: string | null;
+    };
+    /** ConversationOut */
+    ConversationOut: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Title */
+      title: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /** ConversationSummary */
+    ConversationSummary: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Title */
+      title: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
+     * ErrorBody
+     * @description The one error shape every api response uses.
+     */
+    ErrorBody: {
+      /**
+       * Error
+       * @description Stable snake_case code, e.g. not_found, validation_error.
+       */
+      error: string;
+      /**
+       * Trace Id
+       * @description The request's trace id — the same value as the x-trace-id header.
+       */
+      trace_id: string;
+    };
+    /** MessageOut */
+    MessageOut: {
+      /** Citations */
+      citations: components['schemas']['Citation'][] | null;
+      /** Content */
+      content: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Role */
+      role: string;
+    };
+  };
   responses: never;
   parameters: never;
   requestBodies: never;
@@ -141,6 +381,290 @@ export interface operations {
           'application/json': {
             [key: string]: string;
           };
+        };
+      };
+    };
+  };
+  list_conversations_v1_conversations_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+        /** @description The `next_cursor` of the previous page. Omit it for the first page. */
+        cursor?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ConversationList'];
+        };
+      };
+      /** @description Validation failed (`validation_error`) */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Unhandled error (`internal_error`) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+    };
+  };
+  create_conversation_v1_conversations_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        'application/json': components['schemas']['ConversationCreate'] | null;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ConversationOut'];
+        };
+      };
+      /** @description Validation failed (`validation_error`) */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Unhandled error (`internal_error`) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+    };
+  };
+  get_conversation_v1_conversations__conversation_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ConversationDetail'];
+        };
+      };
+      /** @description Unknown conversation (`not_found`) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Validation failed (`validation_error`) */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Unhandled error (`internal_error`) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+    };
+  };
+  ask_question_v1_conversations__conversation_id__ask_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AskRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AskResponse'];
+        };
+      };
+      /** @description Unknown conversation (`not_found`) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Question over 4000 characters (`payload_too_large`) */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Validation failed (`validation_error`) */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Unhandled error (`internal_error`) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description The model or search did not answer, or took over 60 s (`ai_unavailable`). The question is kept; no answer is stored. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
+    };
+  };
+  ask_question_stream_v1_conversations__conversation_id__ask_stream_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        conversation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AskRequest'];
+      };
+    };
+    responses: {
+      /** @description Server-Sent Events, one `event:` and one JSON `data:` line per frame: `sources` `{"citations": [{"title", "path", "chunks"}], "count"}` once retrieval is done, then `token` `{"text"}` for each piece of the answer, then `done` `{"citations", "input_tokens", "output_tokens"}`. The answer is stored before `done` is sent. A failure after the first frame is `error` `{"error_kind"}` and the stream ends (the question is kept, no answer is stored); a failure before the first frame is the normal JSON error (`503 ai_unavailable`). The `x-trace-id` header is on the response; the `error` frame carries no trace id. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': string;
+        };
+      };
+      /** @description Unknown conversation (`not_found`) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Question over 4000 characters (`payload_too_large`) */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Validation failed (`validation_error`) */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Too many streams are open in this process (`rate_limited`). Nothing is stored. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description Unhandled error (`internal_error`) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
+        };
+      };
+      /** @description The model or search failed, or took over 60 s, before the first frame (`ai_unavailable`). The question is kept; no answer is stored. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': components['schemas']['ErrorBody'];
         };
       };
     };

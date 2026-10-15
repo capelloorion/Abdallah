@@ -14,8 +14,8 @@ description: Session resume for a developer — read the roadmaps and tell them,
    to `bash scripts/doctor.sh`). If `infra/platform/*.json` still hold the template placeholders
    (`00000000-…`, `rg-ai-<env>`), list "platform manifests from the cloud team" under _Waiting on a human_.
 1. If `roadmaps/` has no `ROADMAP.md` files: the project is not planned yet. Say whether
-   `ARCHITECTURE.md` Part B and `docs/design/` are filled in, and point to `/init-project`
-   (fresh clone), `/architecture-review`, then `/plan-roadmap <layer>`.
+   `ARCHITECTURE.md` Part B and `docs/design/` are filled in, and point to
+   `/architecture-review`, then `/plan-roadmap <layer>`.
 2. Otherwise, for each layer (`api`, `web`, `infra`): count items by status; list
    `in-progress` and `awaiting-test` items (someone is mid-way — say who, from `notes`); list
    `blocked` items with their reason; compute the next **unblocked** `todo` item.

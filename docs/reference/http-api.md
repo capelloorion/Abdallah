@@ -1,8 +1,9 @@
 # HTTP API reference
 
-The complete HTTP surface of both services as they exist today: **no business endpoints have
-shipped yet** — this documents the operational foundation (`/ping`, `/info`, `/health`) plus the
-two demo BFF routes in `apps/web` that exercise the `web → api` hop. Derived from the route
+The complete HTTP surface of both services as they exist today: the operational foundation
+(`/ping`, `/info`, `/health`), the first business endpoints (`/v1/conversations` on the api, mirrored by
+`/api/v1/conversations` on the BFF) and the two demo BFF routes in `apps/web` that exercise the
+`web → api` hop. Derived from the route
 source, cross-checked against the test suites (`routes.test.ts`, `test_routes.py`).
 
 `apps/api` (FastAPI) is the **only backend**; it took the `api` name in
@@ -13,15 +14,17 @@ removed in [ADR-0003](../adr/0003-remove-nestjs-api-layer.md).
 
 ## Route map
 
-| Method | Path                | Service          | Purpose                                                         | Versioned?       |
-| ------ | ------------------- | ---------------- | --------------------------------------------------------------- | ---------------- |
-| GET    | `/ping`             | `apps/api`       | Liveness greeting                                               | No (operational) |
-| GET    | `/info`             | `apps/api`       | Status/version/runtime report                                   | No (operational) |
-| GET    | `/health`           | `apps/api`       | Health + observability state                                    | No (operational) |
-| GET    | `/v1/*`             | `apps/api`       | Mandatory business router — **empty**, no routes registered yet | Yes (`/v1`)      |
-| GET    | `/api/ping-backend` | `apps/web` (BFF) | Proxies `apps/api` `/ping`                                      | No (demo route)  |
-| GET    | `/api/info-backend` | `apps/web` (BFF) | Proxies `apps/api` `/info`                                      | No (demo route)  |
-| GET    | `/health`           | `apps/web` (BFF) | Own health + observability state (no upstream call)             | No (operational) |
+| Method   | Path                                | Service          | Purpose                                             | Versioned?       |
+| -------- | ----------------------------------- | ---------------- | --------------------------------------------------- | ---------------- |
+| GET      | `/ping`                             | `apps/api`       | Liveness greeting                                   | No (operational) |
+| GET      | `/info`                             | `apps/api`       | Status/version/runtime report                       | No (operational) |
+| GET      | `/health`                           | `apps/api`       | Health + observability state                        | No (operational) |
+| POST/GET | `/v1/conversations[/{id}]`          | `apps/api`       | Chat history: create, list, read (see below)        | Yes (`/v1`)      |
+| POST     | `/v1/conversations/{id}/ask`        | `apps/api`       | Ask a question in a conversation (JSON answer)      | Yes (`/v1`)      |
+| POST     | `/v1/conversations/{id}/ask/stream` | `apps/api`       | Ask a question, answer streamed as SSE              | Yes (`/v1`)      |
+| GET      | `/api/ping-backend`                 | `apps/web` (BFF) | Proxies `apps/api` `/ping`                          | No (demo route)  |
+| GET      | `/api/info-backend`                 | `apps/web` (BFF) | Proxies `apps/api` `/info`                          | No (demo route)  |
+| GET      | `/health`                           | `apps/web` (BFF) | Own health + observability state (no upstream call) | No (operational) |
 
 Business endpoints, when they arrive, are `/v1/<feature>` on the api (routers attached to
 `v1_router`) and `/api/v1/<feature>` on web (folder-enforced). See [Versioning](#versioning).
@@ -31,15 +34,15 @@ Business endpoints, when they arrive, are `/v1/<feature>` on the api (routers at
 ## `apps/api` — FastAPI (port 8000, origin `0c70`)
 
 Source: `apps/api/app/routes.py` (operational router, mounted at root by `app/main.py`).
-`app/routers/v1.py` defines `v1_router` (`prefix="/v1"`) but **no feature router is attached
-yet** — `/v1/*` currently 404s.
+`app/routers/v1.py` defines `v1_router` (`prefix="/v1"`) and attaches the feature routers
+(`conversations` today) — see [`/v1/conversations`](#v1conversations--chat-history-shared-no-auth).
 
 ### `GET /ping`
 
 ```json
 {
   "service": "api",
-  "message": "hello from the AI Accelerator api service",
+  "message": "hello from the Team Assistant api service",
   "trace_id": "0c70…"
 }
 ```
@@ -77,7 +80,7 @@ No upstream call — the api is the end of the hop.
 
 Field notes (`apps/api/app/routes.py`):
 
-- `version` — `importlib.metadata.version("ai-accelerator-api")` (the dist name from
+- `version` — `importlib.metadata.version("team-assistant-api")` (the dist name from
   `pyproject.toml`); falls back to `"unknown"` if the package metadata isn't installed.
 - `env` — `APP_ENV` lowercased, default `"local"`.
 - `uptime_seconds` — `time.monotonic() - _STARTED` (captured at module import), rounded to 3
@@ -104,6 +107,91 @@ Field notes (`apps/api/app/routes.py`):
 state, not database health. **The database is never queried here**: the SQLAlchemy engine is
 lazy and the baseline issues no queries, so `/health` is green with the placeholder
 `DATABASE_URL`.
+
+### `/v1/conversations` — chat history (shared, no auth)
+
+Conversations are **shared**: there is no owner, so every caller sees every conversation
+([ADR-0014](../adr/0014-shared-conversations-until-auth.md), Proposed). Titles and message text
+are user content and are never logged. Source: `apps/api/app/routers/conversations.py`.
+
+| Method | Path                     | Request                                      | Success                                                                                                                                 | Errors                                                                   |
+| ------ | ------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| POST   | `/v1/conversations`      | optional `{ "title": string }` (≤ 200 chars) | `201` `{ id, title, created_at, updated_at }`; a missing or blank title becomes `New conversation`                                      | `422 validation_error` (title too long or not a string)                  |
+| GET    | `/v1/conversations`      | `?limit=50` (1–100) `&cursor=`               | `200` `{ items: [{ id, title, updated_at }], count, next_cursor }`, newest `updated_at` first; `next_cursor` is `null` on the last page | `422 validation_error` (limit out of range, malformed or altered cursor) |
+| GET    | `/v1/conversations/{id}` | —                                            | `200` `{ id, title, created_at, updated_at, messages: [{ id, role, content, citations, created_at }], truncated }`                      | `404 not_found` (unknown id), `422 validation_error` (not a UUID)        |
+
+- Timestamps are ISO 8601 in UTC. `messages` are oldest first; `citations` is `[{ title, path, chunks }]` or `null`; `chunks` is the numbers of the retrieved chunks
+  (the `[n]` markers in the answer) from that document, or `null` for an answer stored before the field existed.
+- A read returns at most the **500 most recent** messages; `truncated` is `true` when older ones were
+  left out (there is no way yet to fetch them — paging is a later item). (This field is an addition to the draft contract in `docs/architecture.md` B4a.)
+- Every response echoes `x-trace-id`; errors use the `{ error, trace_id }` contract below.
+
+#### `POST /v1/conversations/{id}/ask` — ask a question (api:2.2)
+
+Source: `apps/api/app/routers/ask.py`. Request `{ "question": string }`; success
+`200 { message_id, answer, citations: [{ title, path, chunks }] }`. The web BFF does not mirror this JSON route
+(the chat page uses the stream route below).
+
+| Status | Code                | When                                                                                                                                |
+| ------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `404`  | `not_found`         | unknown conversation id                                                                                                             |
+| `413`  | `payload_too_large` | question over **4000 characters** (code points, after trimming)                                                                     |
+| `422`  | `validation_error`  | empty or whitespace-only question, not a string, a lone surrogate or control character (tab, newline and CR are fine), malformed id |
+| `503`  | `ai_unavailable`    | model or search failed or is not configured, no answer within **60 s**, or the model returned nothing                               |
+
+- **Order of work:** the question is stored first (`messages` row, `conversations.updated_at` bumped; a
+  conversation still titled `New conversation` takes the question — control/bidi characters removed,
+  whitespace collapsed, at most 200 characters — as its title), then retrieval and the model run, then the answer is
+  stored (`content`, `citations` as JSON, `token_count` = **output tokens**, `NULL` if the model reports none;
+  `updated_at` bumped again). On a `503` the question stays and **no** assistant message is stored.
+- **History:** the model receives the conversation's last **10** stored messages (each cut to 4000 characters) as
+  human/assistant messages only, plus the retrieved context and the question. Conversations are shared, so that
+  history can hold other users' turns (ADR-0014).
+- **Bounded output:** the answer is trimmed and cut at 20,000 characters (the stored and returned text are identical).
+  `citations` come only from retrieval (unique by path, at most 20); a citation whose `path` is not a plain relative
+  path (a scheme, a leading `/`, a `..` segment, a backslash, quotes or angle brackets, control, bidi or zero-width characters, over 500 characters) is dropped.
+  Each citation carries `chunks`: the 1-based numbers of the retrieved chunks that came from that document (the same numbers
+  the model sees and cites as `[n]`, so `[2]` in the answer is the document whose `chunks` contain `2`). Only whole numbers from 1 up
+  to the number of chunks retrieved are kept (unique, ascending, at most 50); a dropped (unsafe) citation still leaves its numbers
+  unused, so the remaining numbers match the answer. A conversation with no sources returns `citations: []` and stores `NULL`.
+- No question, answer, title or path is ever logged.
+
+#### `POST /v1/conversations/{id}/ask/stream` — ask a question, streamed (api:3.1)
+
+Same request, validation, history, title rule, bounds and citation checks as `/ask`; only the delivery differs.
+Success is `200 text/event-stream` (`cache-control: no-cache`, `x-trace-id` header), one `event:` and one JSON
+`data:` line per frame:
+
+| Frame     | `data`                                                   | When                                                                                    |
+| --------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `sources` | `{ "citations": [{ title, path, chunks }], "count": n }` | once retrieval is done (`count` = chunks retrieved; `citations` are the validated ones) |
+| `token`   | `{ "text": "…" }`                                        | for each piece of the answer                                                            |
+| `done`    | `{ "citations": […], "input_tokens", "output_tokens" }`  | the end; the answer is **already stored** when this frame is sent                       |
+| `error`   | `{ "error_kind": "timeout" \| "network" \| … }`          | a failure after the first frame; the stream ends                                        |
+
+- **Before the first frame** (`404 not_found`, `413 payload_too_large`, `422 validation_error`, `429 rate_limited` when too many streams are open, and `503 ai_unavailable`
+  when retrieval fails, is not configured or takes over 60 s) the response is the normal JSON error, not a stream.
+- **After the first frame** a failure is an `error` frame with a bounded `error_kind` (no message, no trace id — the UI
+  reads the `x-trace-id` header). The question stays stored; **no assistant message** is stored, and there is no `done`.
+- A client that disconnects before `done` stores no assistant message. The whole round trip is limited to 60 s
+  (`error_kind: "timeout"` once streaming). The 60 s is wall-clock for the whole stream.
+- An answer past 20,000 characters stops there: the stored text is the streamed text, trimmed, and the stream ends with
+  `done`. The rest of the model output is read only for the usage (for at most 10 s more, and the model is capped by
+  `AI_MAX_OUTPUT_TOKENS`), so `output_tokens` is normally set and is `null` only if that read fails or stalls. A client that
+  is already gone just before the write gets no stored answer.
+- No question, answer, title or path is ever logged.
+
+#### Request and stream limits (api:5.2)
+
+Per-client rate limiting belongs in the web BFF (it sees the real client address; the api is reached only by the
+BFF). The api bounds what one request or stream can cost it. Source: `apps/api/app/limits.py`; settings in
+[environment-variables.md](environment-variables.md).
+
+| Limit                                                 | Default                                       | Over it                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body, `POST`/`PUT`/`PATCH` to any `/v1` route | 64 KiB (`API_MAX_REQUEST_BODY_BYTES`)         | `413 payload_too_large` before the route reads the body — by `Content-Length`, or counted while a chunked body arrives; the exact 4,000-character question check stays in the ask routes                                                                                                                                            |
+| Open `/ask/stream` responses                          | 20 per process (`API_MAX_CONCURRENT_STREAMS`) | `429 rate_limited` before anything is stored; the slot is freed when the stream ends, fails or the client leaves                                                                                                                                                                                                                    |
+| One write to a stream's client                        | 30 s (`API_STREAM_WRITE_STALL_SECONDS`)       | the stream is ended (no `done`, no answer stored; counted as `write_stalled`) and the model run, search call and DB session are released. It fires only once the transport buffers are full, so a reader that stops holds its slot until then or until the model run ends (bounded by the 60 s deadline and `AI_MAX_OUTPUT_TOKENS`) |
 
 ---
 
@@ -152,6 +240,49 @@ Unlike the two demo routes, this one never calls upstream — it reports `apps/w
 liveness + observability state (`apps/web/src/app/health/route.ts`).
 
 ---
+
+### BFF: `/api/v1/conversations` (chat history)
+
+Source: `apps/web/src/app/api/v1/conversations/` (`route.ts`, `[id]/route.ts`, `[id]/ask/stream/route.ts`);
+shared helpers `src/lib/bff-json.ts` and `src/lib/conversation-limits.ts`. Each handler is wrapped in
+`withBff`; upstream calls go through `fetchUpstream` (JSON) or `streamUpstream` (the SSE route) — never a bare
+`fetch`. A JSON route passes the api's status and body through; the stream route relays the api's events.
+
+| Method | BFF route                               | Upstream                                       | What the BFF checks first                                                                                                                                                                                                                                                                                                                                           |
+| ------ | --------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/conversations`                 | `GET /v1/conversations`                        | `limit`, if present, is an integer 1–100 (else `422 validation_error`); only the validated `limit` is forwarded                                                                                                                                                                                                                                                     |
+| POST   | `/api/v1/conversations`                 | `POST /v1/conversations`                       | `content-type: application/json` (else `415 unsupported_media_type`); body ≤ 4 KB (else `413 payload_too_large`) and received within 5 s (else `408 request_timeout`); a JSON object with an optional well-formed string `title` ≤ 200 UTF-16 units; only a trimmed `title` is forwarded                                                                            |
+| GET    | `/api/v1/conversations/{id}`            | `GET /v1/conversations/{id}`                   | `id` is a UUID (else `422 validation_error`)                                                                                                                                                                                                                                                                                                                        |
+| POST   | `/api/v1/conversations/{id}/ask/stream` | `POST /v1/conversations/{id}/ask/stream` (SSE) | `id` is a UUID (`422`); `content-type: application/json` (`415`); body ≤ 64 KB within 5 s (`413`, `408`); `{ "question": string }` — trimmed, non-empty, well-formed (else `422 validation_error`, as the api answers) and at most 4000 **characters** (code points, as the api counts; else `413 payload_too_large`, pending api Q5); only `question` is forwarded |
+
+- **Per-client limits (web 4.2).** `POST /api/v1/conversations` and `POST /api/v1/conversations/{id}/ask/stream` are rate-limited per client before anything else happens (the body is not even read): 20 chats and 10 questions per minute (`RATE_LIMIT_CREATES_PER_MINUTE`, `RATE_LIMIT_ASKS_PER_MINUTE`), and at most 2 answers streaming at once (`RATE_LIMIT_STREAMS_PER_CLIENT`). Over a limit the BFF answers `429 {error: "rate_limited", trace_id}` with a `Retry-After` header (seconds) and forwards nothing, so the question is neither sent to the model nor stored. The client is the address the platform ingress appended to `x-forwarded-for` (`RATE_LIMIT_TRUSTED_PROXY_HOPS` entries from the end; entries before it are ignored); without a readable address everyone shares one allowance. The limits are in memory per BFF process, so with several replicas they multiply. Listing and reading conversations are not limited. This is separate from the api's own global caps (`api:5.2`), whose `429` is relayed unchanged.
+
+- An unreachable api, a timeout (while connecting or while reading the reply) or a redirect →
+  `502 { error: "upstream_unreachable", target: "api", trace_id }`; an api reply that is not JSON (a proxy
+  page, an empty `204`) → `502 { error: "upstream_error", target: "api", trace_id }`. Neither relays the
+  upstream body, and no upstream header (cookies, `server`) is relayed either.
+- **Stream route.** It relays the api's Server-Sent Events unchanged: `sources`
+  (`{ citations: [{ title, path }], count }`), `token` (`{ text }`)…, then `done`
+  (`{ citations, input_tokens, output_tokens }`) or a terminal `error` (`{ error_kind }`).
+  - An api error _before_ the stream starts (`404`, `422`, `413`, `503 ai_unavailable`…) keeps its status;
+    only its `error` and `trace_id` are relayed (an api reply of any other shape → `502 upstream_error`).
+  - An unreachable api, a timeout or a redirect → `502` whose body is a single `error` frame
+    (`error_kind`: `upstream_unreachable` or `timeout`). Only a `200` whose media type is exactly
+    `text/event-stream` is streamed; anything else → `502 { error: "upstream_error" }`.
+  - If the browser disconnects, the upstream request is aborted so the model call can stop. A stream that
+    dies _after_ headers were sent just ends — a client must treat "ended without `done` or `error`" as a
+    failure.
+- JSON responses carry `cache-control: no-store`; a stream keeps `no-cache, no-transform`. All carry
+  `x-content-type-options: nosniff` — the payloads are shared user content.
+- The `id` must be a canonical hyphenated UUID; the api also accepts un-hyphenated and braced forms, the
+  BFF does not (the UI only sends ids the api returned).
+- With `MOCK_UPSTREAM=true` (refused in `prod`) the routes serve `src/mocks/conversations.ts` — typed from the
+  generated contract — with `x-mock-upstream: true`. The mock is stateless: `POST` returns a fresh
+  conversation but the list does not grow, and a mocked ask is not stored. `GET …/{id}` answers `404
+not_found` for an unknown id; the stream route streams for any well-formed id except
+  `00000000-0000-4000-8000-000000000000` (a `404` before any stream), and a question containing
+  `[mock:error]` ends in an `error` frame instead of `done`.
+- Titles, questions and message text are user content and are never logged.
 
 ## api error contract (`apps/api`, `app/errors.py`)
 
@@ -233,6 +364,7 @@ disabled/degraded state never crashes the service — see `.claude/rules/60-obse
   [`../../.claude/rules/05-api-versioning.md`](../../.claude/rules/05-api-versioning.md).
 - **The only exemption**: the operational endpoints `/ping`, `/info`, `/health` (both services)
   stay unversioned — container/Azure health probes target fixed paths.
-- **This reference documents the foundation surface only** — there are no business endpoints
-  yet. `apps/api`'s `v1_router` is mounted but empty; `apps/web` has no `src/app/api/v1/`
-  folder yet — the first business BFF route creates it.
+- **Business endpoints so far:** `apps/api` serves `/v1/conversations` (api:1.2) and
+  `/v1/conversations/{id}/ask` (api:2.2) and `…/ask/stream` (api:3.1); `apps/web` mirrors the conversation routes under
+  `/api/v1/conversations` (web 1.1). The template's example
+  `/api/v1/assistant/*` routes were removed in web 3.2.

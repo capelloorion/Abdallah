@@ -7,7 +7,7 @@ argument-hint: <model change>
 
 Use the `write-migration` skill (or the `migration-author` agent for destructive / table-rewriting changes) for: `$ARGUMENTS`.
 
-Note: this project runs **no migrations yet** (`apps/api/alembic/versions/` is empty), and `alembic.ini` holds no URL — `alembic/env.py` reads `DATABASE_URL` via `app.config`. `revision --autogenerate` and `check` need the **dev Azure SQL database** reachable (URL from Key Vault, developer IP on the firewall) — **there is no local database**; offline SQL review does not. If the dev DB isn't reachable, hand-write the revision and stop at the offline-SQL step — say so.
+Note: this project has **one revision so far** (`0001`, conversations + messages; never applied by an agent), and `alembic.ini` holds no URL — `alembic/env.py` reads `DATABASE_URL` via `app.config`. `revision --autogenerate` and `check` need the **dev Azure SQL database** reachable (URL from Key Vault, developer IP on the firewall) — **there is no local database**; offline SQL review does not. If the dev DB isn't reachable, hand-write the revision and stop at the offline-SQL step — say so.
 
 1. Edit/add the model under `apps/api/app/models/` (import it in `app/models/__init__.py`; give every `String` a length).
 2. `uv run --directory apps/api alembic revision --autogenerate -m "<snake_case>"` (dev DB) — or write the revision by hand.

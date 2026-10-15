@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseSseBlock, readSseStream, sseFrame, sseStreamFromFrames } from '@/lib/sse';
+import {
+  MAX_SSE_BUFFER_CHARS,
+  parseSseBlock,
+  readSseStream,
+  sseFrame,
+  sseStreamFromFrames,
+} from '@/lib/sse';
 
 async function collect(stream: ReadableStream<Uint8Array>) {
   const out: { event: string; data: string }[] = [];
@@ -46,5 +52,29 @@ describe('sse helpers', () => {
       { event: 'a', data: '1' },
       { event: 'b', data: '2' },
     ]);
+  });
+});
+
+describe('readSseStream limits', () => {
+  it('refuses a frame that never ends, and cancels the source', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode('data: ' + 'x'.repeat(MAX_SSE_BUFFER_CHARS + 1)),
+        );
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(collect(body)).rejects.toThrow(/size limit/);
+    expect(cancelled).toBe(true);
+  });
+
+  it('accepts many ordinary frames, however long the whole stream is', async () => {
+    const frames = Array.from({ length: 5000 }, (_, i) => sseFrame('token', { text: `t${i}` }));
+    const events = await collect(sseStreamFromFrames(frames));
+    expect(events).toHaveLength(5000);
   });
 });

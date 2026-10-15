@@ -1,6 +1,6 @@
-# Security — AI Accelerator
+# Security — Team Assistant
 
-This is the security posture overview for the **AI Accelerator**: what the platform actually
+This is the security posture overview for the **Team Assistant**: what the platform actually
 does today to protect the BFF boundary, secrets, outbound calls, the database layer, and
 containers, and what still needs work before a project built on it can add its own auth. It
 summarizes and links to the enforced rule file rather than duplicating it — if this page and
@@ -107,7 +107,7 @@ id_token, password, secret, client_secret, api_key / apiKey, connection_string /
 ### (e) Database
 
 `apps/api` owns the only database access — SQLAlchemy 2 async on `mssql+aioodbc` against
-**Azure SQL Database** (never local), Alembic wired, **no migrations run** and an empty model set
+**Azure SQL Database** (never local), Alembic wired, migrations **never run by an agent** and a two-table model set (`conversations`, `messages`)
 ([ADR-0008](../adr/0008-azure-sql-data-layer.md),
 [`.claude/rules/25-sqlalchemy.md`](../../.claude/rules/25-sqlalchemy.md)). A second engine
 (`app/db/external.py`) reaches an external database **read-only**: SELECT-only login from the
@@ -125,8 +125,8 @@ unconditional:
 - Applying a migration (`alembic upgrade`) is the Environment-gated `migrate.yml` workflow or a
   named human; agents author and review offline (`--sql`) only.
 
-There are no models and no queries in the codebase today, so this is a standing rule for what
-gets added, not a report on existing code.
+The codebase has two tables and no queries yet, so this is a standing rule for what gets
+added, not a report on existing code.
 
 ### (f) CORS / transport
 

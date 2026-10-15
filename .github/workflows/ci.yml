@@ -1,4 +1,4 @@
-name: AI Accelerator CI
+name: Team Assistant CI
 
 on:
   push:
@@ -106,10 +106,10 @@ jobs:
       - name: OpenAPI contract is current
         run: |
           uv run --directory apps/api python -m app.openapi_export /tmp/openapi.json
-          pnpm exec prettier --write /tmp/openapi.json >/dev/null
+          pnpm exec prettier --stdin-filepath docs/reference/openapi.json < /tmp/openapi.json > /tmp/openapi.fmt.json && mv /tmp/openapi.fmt.json /tmp/openapi.json
           diff -u docs/reference/openapi.json /tmp/openapi.json || { echo "::error::docs/reference/openapi.json is stale — run 'make openapi'"; exit 1; }
           pnpm -C apps/web exec openapi-typescript ../../docs/reference/openapi.json -o /tmp/api-types.ts >/dev/null
-          pnpm exec prettier --write /tmp/api-types.ts >/dev/null
+          pnpm exec prettier --stdin-filepath apps/web/src/lib/api-types.ts < /tmp/api-types.ts > /tmp/api-types.fmt.ts && mv /tmp/api-types.fmt.ts /tmp/api-types.ts
           diff -u apps/web/src/lib/api-types.ts /tmp/api-types.ts || { echo "::error::apps/web/src/lib/api-types.ts is stale — run 'make openapi'"; exit 1; }
 
   # -- 2) "Code changed ⇒ tests changed" (PRs only) ----------------------------
@@ -207,4 +207,4 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
       - name: api image build
-        run: docker build --tag ai-accelerator-api:ci apps/api
+        run: docker build --tag team-assistant-api:ci apps/api

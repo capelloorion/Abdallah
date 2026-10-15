@@ -31,6 +31,7 @@ from app.config import get_settings, load_local_env
 from app.db import dispose_engine
 from app.errors import UnhandledErrorMiddleware, install_error_handlers
 from app.events import track_event
+from app.limits import RequestSizeLimitMiddleware
 from app.logging_config import configure_logging, get_logger
 from app.observability import get_observability_state, init_observability
 from app.routers import v1_router
@@ -73,7 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     """Application factory."""
     app = FastAPI(
-        title="AI Accelerator — api",
+        title="Team Assistant — api",
         version="0.0.0",
         lifespan=lifespan,
     )
@@ -85,6 +86,9 @@ def create_app() -> FastAPI:
     #    (Starlette wraps in reverse order of add_middleware calls).
     install_error_handlers(app)
     app.add_middleware(UnhandledErrorMiddleware)
+    # Oversized /v1 request bodies are refused as 413 (api:5.2); inside the trace middleware so the
+    # error carries the trace id, outside the catch-all so it is not turned into a 500.
+    app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(TraceMiddleware)
 
     # 4. Routes: operational (unversioned) + the mandatory /v1 business surface.

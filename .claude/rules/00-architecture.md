@@ -1,5 +1,5 @@
 ---
-description: Global architecture rules for the AI Accelerator. Always loaded.
+description: Global architecture rules for the Team Assistant. Always loaded.
 paths:
   - '**/*'
 ---
@@ -8,7 +8,7 @@ paths:
 
 > **Graded autonomy:** these are conventions to apply _within_ an approved plan or roadmap item — not a licence to act outside one. Hard stops (infra apply, migration apply, push, secrets, deletes) always need explicit confirmation — see [`CLAUDE.md`](../../CLAUDE.md) → _Graded autonomy_.
 
-AI Accelerator is a **polyglot monorepo of independent packages** (no pnpm
+Team Assistant is a **polyglot monorepo of independent packages** (no pnpm
 workspace, no Turborepo): `apps/web` (Next.js BFF + UI) and `apps/api` (FastAPI — the
 **sole backend**, [ADR-0003](../../docs/adr/0003-remove-nestjs-api-layer.md)). See
 [`CLAUDE.md`](../../CLAUDE.md) and each app's `CLAUDE.md` for the full map.
@@ -50,7 +50,7 @@ in [`README.md`](../../README.md).
 
 - `apps/api` owns the database: **SQLAlchemy 2 async + Alembic** against an **external Azure
   database — never a local one** (no DB container, ever). The engine is **lazy** (no connection
-  until the first query), the model set is a placeholder, and **migrations are not run** by
+  until the first query), the model set is small (`conversations`, `messages`), and **migrations are not run** by
   this project. The engine is **Azure SQL Database** via `mssql+aioodbc` (ODBC Driver 18;
   managed-identity auth when deployed); an optional second engine reads an **external** database
   **read-only** (`app/db/external.py`). Rules in `25-sqlalchemy.md` and

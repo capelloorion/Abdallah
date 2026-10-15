@@ -1,8 +1,8 @@
 # apps/web — CLAUDE.md
 
-Next.js 16 (App Router) **BFF + UI** for the **AI Accelerator** (the brandless starter
+Next.js 16 (App Router) **BFF + UI** for the **Team Assistant** (the brandless starter
 template Orion Digital Solutions built for the Diriyah Company AI team). Port **3000**, trace
-origin **`0eb0`**, OTEL service `ai-accelerator-web`. Project-wide rules and the shared
+origin **`0eb0`**, OTEL service `team-assistant-web`. Project-wide rules and the shared
 `trace_id` / observability contract live in the root [CLAUDE.md](../../CLAUDE.md) and
 [README.md](../../README.md) — this file is the web-specific context. Treat it as a starting
 map; read the actual files when you need detail.
@@ -25,20 +25,45 @@ URL.
   `withBff`, call upstream with `fetchUpstream`; on upstream failure return `502` with a
   `trace_id` (and `target: 'api'`) so the UI degrades gracefully.
 - `src/app/health/route.ts` — `/health`.
-- `src/app/api/v1/assistant/ask/route.ts` + `ask/stream/route.ts` — **example business routes**
-  (JSON + SSE) that proxy `${API_BASE_URL}/v1/assistant/…` or, with `MOCK_UPSTREAM=true`, serve
-  `src/mocks/assistant.ts`. `src/app/chat/page.tsx` — the example chat page on them.
-- `src/components/chat/` — `ChatThread`, `MessageInput`, `ChatPanel` (Tailwind, RTL-tested).
-- `src/lib/stream.ts` (`streamUpstream`/`proxyStream`), `src/lib/sse.ts` (frame parser/builder),
-  `src/lib/chat-client.ts` (`askStream`, browser → BFF), `src/lib/mocks.ts`
+- `src/app/api/v1/conversations/route.ts` (`GET` list, `POST` create) + `[id]/route.ts` (`GET` one) —
+  the **conversation BFF routes** (web 1.1). They validate what they forward (`limit` 1–100, a UUID
+  `id`, a size-capped body reduced to a trimmed `title`), pass the api's status and error body
+  through, and serve `src/mocks/conversations.ts` with `MOCK_UPSTREAM=true`. `src/lib/bff-json.ts` —
+  `bff` (`withBff` + `no-store`/`nosniff`), `proxyJson` (JSON in, JSON out, bounded `502`s, no redirects,
+  no upstream headers relayed), `errorResponse`, `readTextCapped` (size- and time-capped body read);
+  `src/lib/conversation-limits.ts` — the limits (a `route.ts` may export only handlers). `POST` routes
+  require `content-type: application/json` (`415`).
+- `src/app/api/v1/conversations/[id]/ask/stream/route.ts` — the **ask-stream BFF route** (web 1.2). It checks
+  the id, the content type, the body and a 4000-character question (counted in code points), relays the
+  api's SSE with `streamUpstream` + `proxyStream`, and aborts the upstream call when the browser disconnects.
+  An api error before the stream keeps its status (only `error` + `trace_id` relayed); an unreachable api is
+  a `502` carrying an `error` frame. Mock mode streams `askStreamFrames` (`askStreamErrorFrames` for a
+  `[mock:error]` question).
+- `src/components/chat/` — `ChatThread`, `MessageInput`, `ChatPanel` (Tailwind, RTL-tested). A message carries
+  `citations: [{ title, path }]` and, on failure, `error` (a short code) + `traceId`. `ChatThread` shows a
+  **Sources** block (title, then path) as soon as the `sources` frame arrives, and a red line with the code and
+  trace id on failure — a failed answer with nothing to show is just that line, and a cut-off answer keeps its
+  text and is marked incomplete. **Titles, paths and codes are document/server content: render them as text only —
+  never `dangerouslySetInnerHTML`, never a link target** (threat model `shared-conversations` T5).
+- `src/app/chat/page.tsx` — the chat page: just `<ChatWorkspace />` (pages stay thin and under the manual Playwright smoke). `src/components/chat/ChatWorkspace.tsx` — the list + selected conversation: loads the list, **+ New chat**, reopen (stale loads aborted, errors shown as code + trace id), on a finished answer moves the chat to the top and gives a "New conversation" its first question (200 code points) as title; mounts `ChatPanel` (keyed by conversation id, `initialMessages`, `autoFocus`) on `/api/v1/conversations/{id}/ask/stream`. `src/components/chat/ConversationDrawer.tsx` — below 768 px the list column is a drawer behind a **Chats** button (a modal dialog while open: focus in, Tab trapped and Esc handled at the document so they work even when focus is on the body, backdrop/Close/Esc return focus to the button, closes on pick / + New chat / widening; if an action leaves focus nowhere it goes to the button); from 768 px it is the plain left column. `src/lib/conversations-client.ts` — browser client of the conversation BFF routes; **stored data is untrusted text** (shape-checked, bidi/control stripped, bounded, UUID ids, `parseCitations`, stored ids are `stored-<n>` and never carry an error).
+- `src/components/chat/SharedChatsNotice.tsx` — the "chats are shared" notice shown above the chat on `/chat` (ADR-0014; wording proposed in the threat model, one constant, the team approves it); plain text in the normal flow, never an overlay.
+- `src/components/chat/ConversationList.tsx` — the conversation sidebar (web 2.2): presentational, rows are buttons with `aria-current` on the selected one, "No chats yet", **+ New chat**; titles are stored data, rendered as text only. `src/lib/relative-time.ts` formats its times.
+- `src/lib/ask-frames.ts` (the answer-stream frame types + `askFrame()`; mocks use it). `src/lib/contract.test.ts` checks the mock fixtures and frames against the browser clients and the stream's description in `docs/reference/openapi.json`. Request and error types of the BFF routes come from the generated `api-types.ts`; an invalid question is `422 validation_error`, like the api. `src/lib/stream.ts` (`streamUpstream`/`proxyStream`), `src/lib/sse.ts` (frame parser/builder),
+  `src/lib/chat-client.ts` (`askStream`, browser → BFF: hands over `citations`, reports every failure once as
+  `{ code, traceId }` — from the api's JSON `{ error, trace_id }`, the BFF `502` event-stream `error` frame or an
+  in-stream `error` frame, trace id from the body else the `x-trace-id` header, codes checked against a strict
+  pattern — and treats a stream that ends with no `done`/`error` as a failure, `stream_ended`; `parseCitations`
+  keeps only well-formed entries, at most 50, fields at most 500 characters, with control/zero-width/bidi characters
+  stripped; only a same-origin path is accepted as the endpoint; bounded reads — see the changelog), `src/lib/mocks.ts`
   (`isMockUpstream`/`mockJson`/`mockSse`), `src/lib/api-types.ts` (**generated** — `make openapi`).
+- `src/lib/rate-limit.ts` — per-client limits at the BFF (web 4.2): a fixed-window counter per (bucket, client) for asking (10/min) and creating (20/min), and a cap on answers streaming at once (2). The client is the `x-forwarded-for` entry `RATE_LIMIT_TRUSTED_PROXY_HOPS` from the END (the one the ingress appended; client-written entries are ignored), else one shared "unknown" client. In memory per process; an IPv6 client is keyed by its /64 and an IPv4-mapped address by its IPv4; the tracked-client table is bounded and, when full, evicts the OLDEST entry (so a flood of addresses can reset counters but never lock a real client out). `releaseWhenDone` also frees a stream slot after `STREAM_TIMEOUT_MS` whatever the client does. `enforceRateLimit` runs FIRST in the create and ask-stream routes (before the body is read) and answers `429 rate_limited` + `Retry-After`; `acquireStreamSlot` + `releaseWhenDone` hold a slot until the stream ends, fails or is cancelled. **The address is a map key only: never logged, never a metric attribute** (the counter `team-assistant.bff.rate_limited` carries the route class only). Route tests call `__resetRateLimitForTests()` in `beforeEach`.
 - `src/lib/trace.ts` — `withBff` (adopt/generate `x-trace-id`, run inside the `AsyncLocalStorage`
   store, echo the header on the response, record the request-duration metric — pass
   `{ routeClass }` for dynamic segments), `fetchUpstream` (the ONLY sanctioned HTTP client:
   forwards `x-trace-id`, bounds every call with `AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)` (10 s)
   unless the caller passes its own `signal`, records hop-duration + upstream-failure metrics; traceparent +
   dependency span via the undici instrumentation), `getTraceId`, origin `0eb0`.
-- `src/lib/metrics.ts` — `getMeter(scope)` (namespaced `ai-accelerator.<scope>`, no-op when
+- `src/lib/metrics.ts` — `getMeter(scope)` (namespaced `team-assistant.<scope>`, no-op when
   degraded), `statusClass`/`resolveTarget` (bounded labels: `api` | `other`), starter instruments:
   request-duration + chain-hop histograms, upstream-failure counter. **Bounded attributes
   only** — rule 60 → _Metrics & events_.
@@ -78,7 +103,7 @@ URL.
 - **Working ahead of the api:** `MOCK_UPSTREAM=true` in `.env.local` makes a route serve its
   `src/mocks/<feature>.ts` fixture (`isMockUpstream()` / `mockJson` / `mockSse` in
   `src/lib/mocks.ts`); fixtures are typed against `src/lib/api-types.ts` (generated — `make
-openapi`). Example: `/api/v1/assistant/ask[/stream]` + the `/chat` page.
+openapi`). Example: `/api/v1/conversations[/…]` + `src/mocks/conversations.ts` + the `/chat` page.
 - **UI (ADR-0010/0011):** Tailwind v4 utilities; components in `src/components/<area>/` with a
   `*.test.tsx` beside each (`// @vitest-environment jsdom`, RTL, `afterEach(cleanup)`); the
   browser-side streaming client is `src/lib/chat-client.ts` (`askStream`), SSE parsing in

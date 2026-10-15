@@ -40,6 +40,7 @@ class TestSettings:
         assert s.has_model is False and s.has_embeddings is False and s.has_search is False
         assert s.request_timeout_seconds == 60.0
         assert s.max_retries == 2
+        assert s.max_output_tokens == 6000
         assert s.embedding_dimensions == 1536
         assert s.allow_text_to_sql is False
 
@@ -66,20 +67,24 @@ class TestSettings:
         monkeypatch.setenv("AZURE_SEARCH_INDEX", "docs")
         monkeypatch.setenv("AI_REQUEST_TIMEOUT_SECONDS", "12.5")
         monkeypatch.setenv("AI_MAX_RETRIES", "0")
+        monkeypatch.setenv("AI_MAX_OUTPUT_TOKENS", "1500")
         monkeypatch.setenv("AI_ALLOW_TEXT_TO_SQL", "true")
         s = get_ai_settings()
         assert s.has_model and s.has_embeddings and s.has_search
         assert s.embedding_dimensions == 3072
         assert s.request_timeout_seconds == 12.5
         assert s.max_retries == 0
+        assert s.max_output_tokens == 1500
         assert s.allow_text_to_sql is True
 
     def test_bad_numbers_fall_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("AI_REQUEST_TIMEOUT_SECONDS", "-3")
         monkeypatch.setenv("AI_MAX_RETRIES", "many")
+        monkeypatch.setenv("AI_MAX_OUTPUT_TOKENS", "lots")
         monkeypatch.setenv("AZURE_AI_EMBEDDING_DIMENSIONS", "0")
         s = get_ai_settings()
         assert s.request_timeout_seconds == 60.0
+        assert s.max_output_tokens == 6000
         assert s.max_retries == 2
         assert s.embedding_dimensions == 1536
 
@@ -98,6 +103,7 @@ class TestClientFactory:
         assert model.azure_endpoint == ENDPOINT
         assert model.temperature == 0.2
         assert model.max_retries == 2
+        assert model.max_tokens == 6000  # the explicit output cap, sent as max_completion_tokens
         assert model.azure_ad_token_provider is None
         assert called == []  # no identity credential in api_key mode
 
@@ -139,3 +145,31 @@ class TestClientFactory:
         assert client_mod.get_chat_model() is first
         client_mod._reset_for_tests()
         assert client_mod.get_chat_model() is not first
+
+
+class TestOutputCap:
+    def test_a_non_positive_cap_falls_back_to_the_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for raw in ("0", "-5"):
+            monkeypatch.setenv("AI_MAX_OUTPUT_TOKENS", raw)
+            assert get_ai_settings().max_output_tokens == 6000
+
+    def test_the_configured_cap_reaches_the_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AZURE_AI_ENDPOINT", ENDPOINT)
+        monkeypatch.setenv("AZURE_AI_DEPLOYMENT", "gpt-4o-mini")
+        monkeypatch.setenv("AZURE_AI_AUTH_MODE", "api_key")
+        monkeypatch.setenv("AZURE_AI_API_KEY", "dev-key")
+        monkeypatch.setenv("AI_MAX_OUTPUT_TOKENS", "321")
+        assert client_mod.build_chat_model().max_tokens == 321
+
+    def test_a_caller_can_still_override_the_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AZURE_AI_ENDPOINT", ENDPOINT)
+        monkeypatch.setenv("AZURE_AI_DEPLOYMENT", "gpt-4o-mini")
+        monkeypatch.setenv("AZURE_AI_AUTH_MODE", "api_key")
+        monkeypatch.setenv("AZURE_AI_API_KEY", "dev-key")
+        assert client_mod.build_chat_model(max_tokens=50).max_tokens == 50
+
+    def test_a_cap_above_the_ceiling_is_cut_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_MAX_OUTPUT_TOKENS", "10000000")
+        assert get_ai_settings().max_output_tokens == 16000

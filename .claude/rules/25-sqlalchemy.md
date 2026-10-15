@@ -14,7 +14,7 @@ paths:
 **SQLAlchemy 2.0.54 (asyncio) + aioodbc 0.5 / pyodbc 5.3 on Microsoft ODBC Driver 18 + Alembic
 1.20** against **Azure SQL Database**. **There is no local database, ever**; the project's
 database is created by the use-case Bicep deployment first (ADR-0012); **migrations are not run** by this project
-(the model set is a placeholder). Decided in
+(the model set is small: `conversations`, `messages`). Decided in
 [ADR-0008](../../docs/adr/0008-azure-sql-data-layer.md) (supersedes ADR-0004's driver choices).
 See [`apps/api/CLAUDE.md`](../../apps/api/CLAUDE.md) → _Database_.
 
@@ -24,7 +24,7 @@ See [`apps/api/CLAUDE.md`](../../apps/api/CLAUDE.md) → _Database_.
   `MetaData` (`ix_`/`uq_`/`ck_`/`fk_`/`pk_`). Every model subclasses it. Never create a second
   `MetaData`.
 - `engine.py` — `get_engine()` is a **lazy singleton** built with
-  `sa_asyncio.create_async_engine(settings.database_url, pool_pre_ping=True)`. It must **never
+  `sa_asyncio.create_async_engine(settings.database_url, pool_pre_ping=True, hide_parameters=True)` (`hide_parameters` keeps bound values — a title, a question — out of exception text). It must **never
   connect at import or startup** — no `await conn.execute` in `lifespan`, no `engine.begin()` in
   module scope. `dispose_engine()` is awaited on shutdown and is idempotent. **Resolve
   `create_async_engine` through the module attribute at call time** (`from sqlalchemy.ext import

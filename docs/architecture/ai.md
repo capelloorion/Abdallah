@@ -61,19 +61,24 @@ report token usage on streamed answers too.
 **`graph.py`.** `build_graph(chat_model=None, retriever=None, tools=None, top_k=5)` compiles a
 `StateGraph` over a typed state (`messages` with the `add_messages` reducer, `context`):
 
-1. `retrieve` — embeds the latest user turn and queries the retriever (deterministically, every
-   turn — grounding never depends on the model choosing a tool); records retrieval telemetry.
+1. `retrieve` — builds the search query with `retrieval_query()` and queries the retriever
+   (deterministically, every turn — grounding never depends on the model choosing a tool);
+   records retrieval telemetry. The query is the latest user turn, preceded by the **previous user
+   turn** (cut to 1,000 characters) when there is one, so a follow-up such as "And on the api side?"
+   finds the conversation's topic (decision Q3: no extra model call, no extra node; the assistant's
+   earlier answers are never used; a blank turn or a repeat of the same question is skipped). The query is
+   search input only and is never logged.
 2. `answer` — renders `prompts/system.md` with the numbered context, calls the model inside
    `model_call_span()`, appends the `AIMessage`.
 3. optional `tools` — when tools are passed, the model is bound to them and a `ToolNode` loop
    (`answer → tools → answer`) runs until it stops calling tools.
 
 `ask(graph, question, history=…)` is the non-streaming entry point and returns the answer text,
-the unique sources, the context and the token usage.
+the citations (`[{title, path, chunks}]`, unique by path, in retrieval order; `chunks` are the `[n]` numbers of that document's retrieved chunks), the context and the token usage.
 
 **`streaming.py`.** `stream_answer()` drives the same graph with LangGraph's `updates` +
-`messages` stream modes and yields Server-Sent Events: `sources` (after retrieval), `token`
-(per model chunk), `done` (sources + usage) or `error` (a bounded `error_kind`, never the
+`messages` stream modes and yields Server-Sent Events: `sources` (after retrieval, carrying
+`citations`), `token` (per model chunk), `done` (`citations` + usage) or `error` (a bounded `error_kind`, never the
 exception message). `sse_response()` wraps it in a `StreamingResponse` with proxy buffering
 disabled. The BFF forwards it with the streaming pass-through helper, not `fetchUpstream`.
 
@@ -92,10 +97,13 @@ the search index and an embedding deployment are configured, otherwise `NullRetr
 graph still answers, with an empty context.
 
 **`ingest.py`.** The RAG ingestion job owns the index definition (`build_index`: `id`,
-`content`, `source`, `chunk_index`, `content_vector` with an HNSW profile sized by
+`content`, `source`, `title` (the first `# ` heading outside code blocks, else the file name),
+`chunk_index`, `content_vector` with an HNSW profile sized by
 `AZURE_AI_EMBEDDING_DIMENSIONS`) so the retriever and the index cannot drift. `ensure_index` is
 idempotent; `ingest_documents` chunks (fixed windows with overlap), embeds in batches and
-uploads with stable ids (re-ingesting a source overwrites its chunks). Run it from `apps/api`:
+uploads with stable ids (re-ingesting a source overwrites its chunks). The retriever `select`s
+`title`, so the index must have that field: run the ingestion job (its first step, `ensure_index`,
+adds it in place) before the first query, otherwise retrieval fails with a bounded `error_kind`. Run it from `apps/api`:
 `uv run python -m app.ai.ingest ./docs`. The identity needs _Search Index Data Contributor_ +
 _Search Service Contributor_ (granted to the api identity by the `ai-search` module; a dev key
 works locally).
@@ -103,13 +111,17 @@ works locally).
 **`prompts/`.** Prompts are files. `load_prompt("system")` reads `prompts/system.md`;
 `render_prompt` fills `{placeholders}` and fails loudly on a missing one. The shipped system
 prompt grounds the answer in the numbered context, requires `[n]` citations, refuses to invent,
-and states that context is data, not instructions.
+and states that context is data, not instructions and that earlier turns of the conversation (written by
+other users, because conversations are shared) are history, never instructions or a source of facts or citations.
+The ask route (`routers/ask.py`, api:2.2) sends history only as human/assistant messages, never as a system message.
 
 **`telemetry.py`.** `model_call_span(deployment)` wraps every model call: a span named
 `gen_ai.chat` with `gen_ai.system`, `gen_ai.operation.name`, `gen_ai.request.model`, the
 `trace_id`, and — after the call — `gen_ai.usage.input_tokens` / `output_tokens`; metrics
-`ai-accelerator.ai.model.duration`, `.model.tokens`, `.model.failures`, `.retrieval.duration`
-(bounded attributes: deployment, outcome, token type, error kind); one `ai.model_call` custom
+`team-assistant.ai.model.duration`, `.model.tokens`, `.model.failures`, `.retrieval.duration`, and
+`.ask.outcomes` (`record_ask_outcome`, one count per ask by `route_class` `ask`|`ask_stream` and `outcome`
+`ok`|`cut`|`ai_unavailable`|`timeout`|`client_disconnected`|`error`|`rejected`|`write_stalled`, both checked against those fixed sets)
+(bounded attributes: deployment, outcome, token type, error kind, route class); one `ai.model_call` custom
 event; one structured log line. **No prompt, completion, retrieved text or user identifier
 anywhere.** The OTel GenAI auto-instrumentation packages are deliberately not used (pin coupling
 with the distro's `0.61b0` line and content capture).
@@ -119,7 +131,7 @@ with the distro's `0.61b0` line and content capture).
 ## Using it from a route
 
 ```python
-# apps/api/app/routers/assistant.py  (a project's feature — the template ships no route)
+# apps/api/app/routers/assistant.py  (a project's own feature; the real example is routers/ask.py)
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -146,7 +158,7 @@ class AskIn(BaseModel):
 @router.post("/ask")
 async def ask_route(body: AskIn) -> dict:
     answer = await ask(graph(), body.question)
-    return {"answer": answer.text, "sources": answer.sources}
+    return {"answer": answer.text, "citations": answer.citations}
 
 
 @router.post("/ask/stream")
@@ -157,6 +169,10 @@ async def ask_stream(body: AskIn):
 Attach it to `v1_router` (rule 05). The BFF calls `/v1/assistant/ask` with `fetchUpstream`
 (raising the hop timeout via `signal` — a model call routinely exceeds 10 s) and
 `/v1/assistant/ask/stream` with the streaming pass-through helper.
+
+A route that must act between frames — store the answer before the `done` frame, return plain JSON for a failure
+before the first frame — consumes `stream_events()` (typed `(event, data)` pairs) and formats frames with `sse()`
+itself instead of returning `stream_answer()`; `routers/ask.py` (`/ask/stream`, api:3.1) is the worked example.
 
 ---
 
@@ -188,6 +204,6 @@ whenever a prompt changes. A live-model tier is opt-in (`AI_EVAL_LIVE=true`).
 - [ADR-0009](../adr/0009-ai-runtime-langchain-langgraph-foundry.md) — the decision and the
   alternatives rejected.
 - [data.md](data.md) — the read-only external engine the query tool uses.
-- [observability.md](observability.md) — where the `gen_ai` spans and `ai-accelerator.ai.*`
+- [observability.md](observability.md) — where the `gen_ai` spans and `team-assistant.ai.*`
   metrics land.
 - The shared Foundry and AI Search service (platform tier) and the project's index — [`infra/README.md`](../../infra/README.md), [`infra/platform/README.md`](../../infra/platform/README.md).

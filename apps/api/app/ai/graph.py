@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
@@ -31,7 +31,13 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from app.ai.config import get_ai_settings
 from app.ai.prompts import render_prompt
 from app.ai.telemetry import extract_usage, model_call_span, record_retrieval
-from app.ai.tools.retrieve import DEFAULT_TOP_K, RetrievedChunk, Retriever, get_default_retriever
+from app.ai.tools.retrieve import (
+    DEFAULT_TOP_K,
+    RetrievedChunk,
+    Retriever,
+    chunk_title,
+    get_default_retriever,
+)
 
 
 class GraphState(TypedDict, total=False):
@@ -55,6 +61,32 @@ def last_user_text(messages: list[AnyMessage]) -> str:
             content = message.content
             return content if isinstance(content, str) else str(content)
     return ""
+
+
+# A follow-up is searched together with the turn before it; that turn is cut to this many
+# characters so the query stays small whatever was written earlier (a cost and injection bound).
+MAX_PREVIOUS_TURN_CHARS = 1000
+
+
+def retrieval_query(messages: list[AnyMessage]) -> str:
+    """What to search for: the new question, preceded by the previous *user* turn when there is one.
+
+    A follow-up such as "And on the api side?" means nothing alone; searched together with the turn
+    before it, it finds the conversation's topic (decision Q3: no extra model call, no extra node).
+    Only user turns are used — never the assistant's earlier answer, which could echo anything.
+    A blank turn, or the same question asked again after a failed answer (the failed question stays
+    stored), adds nothing, so the search looks one user turn further back.
+    The query is search input only: it is never logged (rule 70).
+    """
+    question = last_user_text(messages)
+    if not question:
+        return ""
+    user_turns = [m for m in messages if isinstance(m, HumanMessage)]
+    for message in reversed(user_turns[:-1]):
+        previous = _message_text(message).strip()
+        if previous and previous != question.strip():
+            return f"{previous[:MAX_PREVIOUS_TURN_CHARS]}\n{question}"
+    return question
 
 
 def _message_text(message: Any) -> str:
@@ -89,7 +121,7 @@ def build_graph(
     bound_tools = list(tools or [])
 
     async def retrieve(state: GraphState) -> GraphState:
-        question = last_user_text(state.get("messages", []))
+        question = retrieval_query(state.get("messages", []))
         active = retriever if retriever is not None else get_default_retriever()
         started = time.perf_counter()
         try:
@@ -125,22 +157,47 @@ def build_graph(
     return graph.compile()
 
 
+class Citation(TypedDict):
+    """What a user sees for a source: the document's title and its path.
+
+    ``chunks`` are the numbers of the retrieved chunks (the ``[n]`` markers in the answer) that
+    came from this document, ascending. Absent on a citation from before the field existed.
+    """
+
+    title: str
+    path: str
+    chunks: NotRequired[list[int]]
+
+
 @dataclass
 class Answer:
     text: str
-    sources: list[str] = field(default_factory=list)
+    citations: list[Citation] = field(default_factory=list)
     context: list[RetrievedChunk] = field(default_factory=list)
     input_tokens: int | None = None
     output_tokens: int | None = None
 
 
-def unique_sources(chunks: list[RetrievedChunk]) -> list[str]:
-    seen: list[str] = []
-    for c in chunks:
-        source = c.get("source") or ""
-        if source and source not in seen:
-            seen.append(source)
-    return seen
+def citations_for(chunks: list[RetrievedChunk]) -> list[Citation]:
+    """One citation per distinct source path, in retrieval order (the first chunk's title wins).
+
+    Each carries ``chunks``: the 1-based numbers its chunks have in the context block the model
+    cites (``format_context`` numbers EVERY retrieved chunk, so a chunk with no source still takes
+    a number but belongs to no citation).
+
+    Titles and paths are document content: never log them (rule 70).
+    """
+    by_path: dict[str, Citation] = {}
+    for number, chunk in enumerate(chunks, start=1):
+        path = chunk.get("source") or ""
+        if not path:
+            continue
+        citation = by_path.get(path)
+        if citation is None:
+            citation = {"title": chunk_title(chunk), "path": path, "chunks": []}
+            by_path[path] = citation
+        citation["chunks"].append(number)
+    return list(by_path.values())
 
 
 async def ask(
@@ -162,7 +219,7 @@ async def ask(
     context = result.get("context", []) or []
     return Answer(
         text=text,
-        sources=unique_sources(context),
+        citations=citations_for(context),
         context=context,
         input_tokens=input_tokens,
         output_tokens=output_tokens,

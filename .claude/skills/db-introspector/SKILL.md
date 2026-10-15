@@ -18,7 +18,7 @@ Migrations break in prod when the developer's mental model of the live schema is
 
 ## Caveats
 
-- The baseline model set is an **empty placeholder** and the dev database may be unreachable from this machine (firewall). If the URL is unset/unreachable, say so and fall back to reading `apps/api/app/models/` + `alembic/versions/` — but note that models describe _intent_, the database describes _reality_.
+- The model set is small (`conversations`, `messages`) and the dev database may be unreachable from this machine (firewall). If the URL is unset/unreachable, say so and fall back to reading `apps/api/app/models/` + `alembic/versions/` — but note that models describe _intent_, the database describes _reality_.
 - **Read-only only.** Never mutate. If you want to change the schema, that's a migration (`write-migration`), not a query. The external engine refuses non-SELECT statements by construction.
 - Don't paste rows containing PII into output — `TOP`/`OFFSET … FETCH` and redact. Never print either URL.
 

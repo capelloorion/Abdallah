@@ -1,6 +1,6 @@
 # Architecture — living document
 
-This is the **one architecture file** for a project built on the AI Accelerator. It has two
+This is the **one architecture file** for a project built on the Team Assistant. It has two
 parts with different owners:
 
 | Part                                                               | Owner                                                                  | Rule                                                                                                                                                                                                                                       |
@@ -68,7 +68,7 @@ domain, no auth, no AI feature — those are the project's job, built in the slo
 flowchart LR
     user(["Browser user"])
 
-    subgraph platform["Project platform (built on the AI Accelerator)"]
+    subgraph platform["Project platform (built on the Team Assistant)"]
         web["apps/web<br/>Next.js BFF + UI"]
         api["apps/api<br/>FastAPI — backend + AI runtime"]
     end
@@ -202,15 +202,25 @@ Honest state of what exists (see also the root `README.md` → _Scope & delivery
 
 ## Part B — Project architecture
 
-> Team-maintained. Fill this in after `/rename-project` (later `/init-project`) and keep it
+> Team-maintained. Fill this in and keep it
 > current as the project evolves. Everything the planning skills generate starts from here and
 > from `docs/design/`. Delete the guidance text in each section once you have written the real
 > content.
 
 ### B1. Project summary
 
-_One paragraph: what the application does, for whom, and the business outcome it serves. Name
-the project's environments and the Azure subscription/resource-group naming convention._
+**Team Assistant** is a chat assistant for the Diriyah Company AI team: a Next.js BFF + UI
+(`apps/web`) in front of a FastAPI backend (`apps/api`) that runs LangGraph chains on Azure AI
+Foundry with Azure AI Search retrieval. The business outcome and the exact feature scope are
+**not yet written down** — see B8 (open question 1); `B2` is filled in before `/plan-roadmap`.
+
+- **Environments:** `dev`, `staging`, `prod`. Resource groups follow the cloud team's
+  `rg-ai-<env>` convention (`rg-ai-dev` confirmed for dev); the per-environment values live in
+  `infra/platform/<env>.json`. The Azure subscription ids are not recorded yet (B8, question 2).
+- **Slug:** `team-assistant` (npm scope, OTEL service names, image names, Azure resource names).
+- **Foundry deployments used:** chat `gpt-4.1`; embedding `text-embedding-3-large` (3072
+  dimensions). **Search index:** `team-assistant-docs`.
+- **Team:** Abdallah Ahmed (@capelloorion) — admin, backend and frontend developer.
 
 ### B2. Feature map
 
@@ -259,17 +269,28 @@ endpoints later); (d) the identities and the **grants requested** from the cloud
 
 ### B7. Security and auth posture
 
-_Who the users are, how they authenticate (or the explicit "internal-only, no auth" decision),
-authorization model (thread/record ownership, roles), data classification, threat models
-written (`docs/security/threat-models/`)._
+**Internal-only, no user auth** (team decision D8). Okta is the planned module later (roadmap
+Phase 8) and needs an ADR and a threat model first. Until then the controls are the BFF
+boundary, secrets in Key Vault, traced outbound HTTP, the SQLAlchemy layer and container
+hardening (`.claude/rules/50-security.md`). No external databases; no threat models written
+yet (`docs/security/threat-models/`).
 
 ### B8. Decisions and open questions
 
 _Links to the project's ADRs (`docs/adr/`) and the questions still open, each with an owner
 and a date._
 
+Open questions (owner: Abdallah Ahmed, raised 2026-10-06):
+
+1. What business outcome and feature scope does Team Assistant serve? B2–B5 stay empty until
+   this is answered.
+2. Azure subscription ids, Container Apps Environment, registry, Foundry and AI Search
+   endpoints per environment — `infra/platform/*.json` still holds template placeholders
+   (the cloud team's manifests are needed).
+3. SQL Entra admin group per environment and alert e-mail addresses (`main.<env>.bicepparam`).
+
 ### B9. Change log of this document
 
-| Date | Who | What changed |
-| ---- | --- | ------------ |
-|      |     |              |
+| Date       | Who            | What changed                                                                  |
+| ---------- | -------------- | ----------------------------------------------------------------------------- |
+| 2026-10-06 | Abdallah Ahmed | `/init-project`: project named Team Assistant; B1, B7, B8 seeded; B9 created. |

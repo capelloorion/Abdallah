@@ -77,6 +77,7 @@ def test_engine_is_lazy_separate_and_a_singleton(
     assert engine.url.host == "warehouse.invalid"
     assert engine.url.query["ApplicationIntent"] == "ReadOnly"
     assert event.contains(engine.sync_engine, "before_cursor_execute", external_mod._reject_writes)
+    assert engine.sync_engine.hide_parameters is True  # no bound value in an exception text
     assert no_connect == []
 
 

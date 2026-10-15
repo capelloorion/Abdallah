@@ -1,7 +1,8 @@
 """RAG ingestion job (ADR-0009): load → chunk → embed → upload to Azure AI Search.
 
 Owns the **index definition** (``build_index``) so the retriever and the index never drift:
-fields ``id`` (key), ``content`` (searchable), ``source`` (filterable), ``chunk_index``, and
+fields ``id`` (key), ``content`` (searchable), ``source`` (filterable), ``title`` (searchable; the
+document's first ``# `` heading, else its file name), ``chunk_index``, and
 ``content_vector`` (HNSW vector profile, ``AZURE_AI_EMBEDDING_DIMENSIONS`` wide). ``ensure_index``
 is idempotent (``create_or_update_index``).
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import re
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -34,9 +36,13 @@ from app.ai.tools.retrieve import (
     CONTENT_FIELD,
     ID_FIELD,
     SOURCE_FIELD,
+    TITLE_FIELD,
+    TITLE_MAX_CHARS,  # noqa: F401  (re-exported: the cap applies at ingestion and on read)
     VECTOR_FIELD,
     build_search_client,
     build_search_credential,
+    clean_title,
+    fallback_title,
 )
 from app.logging_config import configure_logging, get_logger
 
@@ -84,6 +90,70 @@ def chunk_text(
     return chunks
 
 
+# Anchored, bounded patterns only — a hostile document must not be able to make these slow.
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_H1 = re.compile(r"^ {0,3}#(?:[ \t]+(.*))?$")
+
+
+def _strip_closing_hashes(heading: str) -> str:
+    """Drop an ATX closing sequence (``# Title ##``) but keep a `#` that is part of a word (``C#``).
+
+    Hand-written rather than a regex: linear time, whatever the line looks like.
+    """
+    heading = heading.rstrip()
+    stripped = heading.rstrip("#")
+    if stripped == heading:
+        return heading  # no trailing #
+    if not stripped:
+        return ""  # nothing but #s
+    if stripped[-1] in " \t":
+        return stripped.rstrip()  # a closing sequence, separated by whitespace
+    return heading  # '#' glued to a word (C#, F#): part of the title
+
+
+def _front_matter_end(lines: list[str]) -> int:
+    """Index of the first line after a leading ``---`` YAML block, else 0."""
+    if lines and lines[0].strip() == "---":
+        for index in range(1, len(lines)):
+            if lines[index].strip() in ("---", "..."):
+                return index + 1
+    return 0
+
+
+def document_title(source: str, text: str) -> str:
+    """The first level-1 Markdown heading (``# Title``), else the file name.
+
+    Handles what real Markdown has: a leading BOM, CRLF, YAML front matter, a heading indented up
+    to three spaces, a closing ``#`` sequence (but not the ``#`` in ``C#``), and fenced code — a
+    fence closes only on the same character with at least as many characters, so a shell comment
+    in a code block is never the title. The result is cleaned and capped (``clean_title``).
+    Titles are document content: stored in the index and shown as citations, never logged.
+    """
+    lines = text.removeprefix("\ufeff").splitlines()
+    fence_char, fence_len = "", 0
+    for line in lines[_front_matter_end(lines) :]:
+        fence = _FENCE.match(line)
+        if fence_char:  # inside a fenced block: only a matching closing fence ends it
+            if (
+                fence
+                and fence.group(1)[0] == fence_char
+                and len(fence.group(1)) >= fence_len
+                and not fence.group(2).strip()
+            ):
+                fence_char = ""
+            continue
+        if fence and not (fence.group(1)[0] == "`" and "`" in fence.group(2)):
+            fence_char, fence_len = fence.group(1)[0], len(fence.group(1))
+            continue
+        heading = _H1.match(line)
+        if heading is None:
+            continue
+        title = clean_title(_strip_closing_hashes(heading.group(1) or ""))
+        if title:
+            return title
+    return clean_title(fallback_title(source))
+
+
 def chunk_id(source: str, index: int) -> str:
     """Stable, key-safe id (re-ingesting the same source overwrites the same documents)."""
     return hashlib.sha1(f"{source}#{index}".encode()).hexdigest()
@@ -106,6 +176,7 @@ def build_index(name: str, dimensions: int) -> Any:
         SimpleField(name=ID_FIELD, type=SearchFieldDataType.String, key=True, filterable=True),
         SearchableField(name=CONTENT_FIELD),
         SimpleField(name=SOURCE_FIELD, type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name=TITLE_FIELD),
         SimpleField(
             name=CHUNK_INDEX_FIELD, type=SearchFieldDataType.Int32, filterable=True, sortable=True
         ),
@@ -150,7 +221,9 @@ def load_path(path: Path) -> list[IngestDocument]:
     for file in files:
         if file.suffix.lower() not in TEXT_SUFFIXES:
             continue
-        docs.append(IngestDocument(source=file.as_posix(), text=file.read_text(encoding="utf-8")))
+        docs.append(
+            IngestDocument(source=file.as_posix(), text=file.read_text(encoding="utf-8-sig"))
+        )
     return docs
 
 
@@ -174,12 +247,14 @@ async def ingest_documents(
     records: list[dict[str, Any]] = []
     for doc in documents:
         report.documents += 1
+        title = document_title(doc.source, doc.text)
         for i, piece in enumerate(chunk_text(doc.text, chunk_size, overlap)):
             records.append(
                 {
                     ID_FIELD: chunk_id(doc.source, i),
                     CONTENT_FIELD: piece,
                     SOURCE_FIELD: doc.source,
+                    TITLE_FIELD: title,
                     CHUNK_INDEX_FIELD: i,
                 }
             )

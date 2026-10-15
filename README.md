@@ -1,37 +1,16 @@
-# AI Accelerator
+# Team Assistant
 
-> A brandless starter template that the **[Diriyah Company](https://www.diriyahcompany.sa/en/) AI team** uses to accelerate
-> the development of its AI projects. Built and maintained by **[Orion Digital Solutions](https://www.orion360.com/)** for the
-> Diriyah Company. Every project-identity string is a placeholder — clone, rename, build.
+> A chat assistant for the **[Diriyah Company](https://www.diriyahcompany.sa/en/) AI team**, built on the AI Accelerator
+> starter by **[Orion Digital Solutions](https://www.orion360.com/)**.
 
 ## Overview
 
-The AI Accelerator is exactly that — an accelerator: clone it, rename it (see
-[Using this template](#using-this-template)), and start building your AI project's features
-on a foundation that already works. It ships two wired-together services — a Next.js
+Team Assistant is built on the AI Accelerator foundation, so the AI features start on a base
+that already works. It ships two wired-together services — a Next.js
 BFF + UI and a FastAPI backend that owns the database — with **end-to-end `trace_id`
 propagation** and **Azure Monitor / OpenTelemetry** observability baked into both
 services, and is designed from the start for **continuous monitoring, performance
 optimization, and measurable business impact** on **Microsoft Azure**.
-
-## Using this template
-
-Every project-identity string in the repo is a placeholder from one family, so a new
-project renames everything in one pass:
-
-| Placeholder token    | Used for                                                      |
-| -------------------- | ------------------------------------------------------------- |
-| `AI Accelerator`     | display name — page titles, docs headings, API/OpenAPI titles |
-| `ai-accelerator`     | kebab-case slug — OTEL service names, Docker images, compose  |
-| `@ai-accelerator/*`  | npm package scope (`apps/web`)                                |
-| `ai-accelerator-api` | Python distribution name (`pyproject.toml`, `app/config.py`)  |
-
-To rename, run the **`/rename-project`** command (backed by the
-`.claude/skills/rename-project/` skill): it asks for your project's display name,
-derives the kebab-case slug (lowercase letters/digits/hyphens only — no spaces or
-special characters), replaces every token above across the repo, regenerates
-`apps/api/uv.lock`, and verifies nothing was missed. Doing it by hand? Replace the
-four token families above, then run `uv lock` in `apps/api` and rebuild.
 
 ## Scope & delivery status
 
@@ -51,8 +30,8 @@ today**, so the roadmap is never mistaken for what's shipped.
 > cross-service **foundation** a real project builds on: the `web → api`
 > chain carrying one `x-trace-id` unchanged, Azure Monitor / OpenTelemetry
 > observability in both services, and `ping` / `health` / `info` endpoints. **No
-> business features and no auth are implemented**; the SQLAlchemy model set is an
-> empty placeholder with Alembic wired but idle, and `infra/` holds the use-case Bicep
+> business features and no auth are implemented**; the SQLAlchemy model set is two
+> tables (conversations, messages) with one unapplied Alembic revision, and `infra/` holds the use-case Bicep
 > (not yet deployed) on the cloud team's shared platform. The living architecture is
 > [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md); what the template
 > itself still needs is tracked in [`docs/template-roadmap.md`](docs/template-roadmap.md).
@@ -76,7 +55,7 @@ origin `0a71` is retired — was removed in
   pinned across `.nvmrc`, the web Dockerfile, and `engines`.
 - **Database:** SQLAlchemy 2 async (`mssql+aioodbc`) in `apps/api` against
   **Azure SQL Database** (created by the use-case Bicep deployment; **never local**). The model set
-  is an empty placeholder and Alembic is wired but idle — **no database
+  is two tables (conversations, messages) and Alembic holds one unapplied revision — **no database
   container anywhere**. An optional second engine reads an external database
   **read-only**.
 - **Observability:** OpenTelemetry → Azure Monitor + Log Analytics. Structured
@@ -123,8 +102,8 @@ KQL) · [security](docs/security/README.md) · [ADRs](docs/adr/README.md).
 │  ├─ web/                # Next.js 16 — UI + BFF route handlers; /health
 │  └─ api/                # FastAPI — /ping, /info, /health; owns the database
 │     ├─ app/db/          #   SQLAlchemy 2 async: Base, lazy engine, get_session()
-│     ├─ app/models/      #   ORM models (empty placeholder + commented example)
-│     ├─ alembic/         #   Alembic env (async) + versions/ (empty)
+│     ├─ app/models/      #   ORM models (conversation.py: Conversation, Message)
+│     ├─ alembic/         #   Alembic env (async) + versions/ (0001)
 │     └─ alembic.ini
 ├─ infra/
 │  ├─ main.bicep          # the use-case tier (ADR-0012) + main.<env>.bicepparam — see infra/README.md
@@ -336,7 +315,7 @@ The **same code path runs locally and when deployed** — config comes from
   ([ADR-0008](docs/adr/0008-azure-sql-data-layer.md), which supersedes
   [ADR-0004](docs/adr/0004-sqlalchemy-async-alembic-db-layer.md)).
 - **Metrics & custom events (Phase 3).** `getMeter(scope)` / `get_meter(scope)`
-  returns namespaced meters (`ai-accelerator.<scope>`; silent no-op in degraded
+  returns namespaced meters (`team-assistant.<scope>`; silent no-op in degraded
   mode). Starter set: request-duration histogram (by route class + status
   class), upstream-hop duration histogram (target label set `api | other`),
   BFF upstream-failure counter. Runtime
@@ -381,7 +360,7 @@ Full contract (incl. the per-service auto-instrumentation inventory) in
   `TRACE_SAMPLING_RATIO` (0..1). The standard `OTEL_TRACES_SAMPLER` /
   `OTEL_TRACES_SAMPLER_ARG` env vars take precedence when set.
 - **Cloud role identity:** each service defaults `service.name` (→ App
-  Insights _cloud role name_: `ai-accelerator-web|api`) and
+  Insights _cloud role name_: `team-assistant-web|api`) and
   `service.instance.id` (→ _cloud role instance_: container replica name →
   `HOSTNAME` → os hostname) via the standard OTel env vars. Defaults are
   **append-only** — operator-provided `OTEL_SERVICE_NAME` /
@@ -431,11 +410,11 @@ Database**, with **Alembic** for migrations:
 - `app/db/external.py` — a second, **read-only** lazy engine for an external
   database (`EXTERNAL_DATABASE_URL`; `Depends(get_external_session)`); no
   Alembic, and any non-`SELECT` statement is refused before it reaches the driver.
-- `app/models/__init__.py` — the model set, **empty on purpose** (one commented
-  example model to start from).
+- `app/models/__init__.py` — the model set: `conversation.py` (`Conversation`,
+  `Message` - the shared chat history).
 - `alembic.ini` + `alembic/env.py` — the async Alembic environment; the URL is
   not in the ini, it comes from `DATABASE_URL` via `app.config.get_settings()`.
-  `alembic/versions/` is **empty**.
+  `alembic/versions/` holds revision `0001` (not applied to any database).
 
 `DATABASE_URL` uses the aioodbc scheme with the ODBC keywords in the query
 string —
@@ -463,8 +442,8 @@ driver) so it can be run from the container too.
    `uv run --directory apps/api alembic revision --autogenerate -m "add widget"`.
 4. Review the SQL offline (no database needed):
    `uv run --directory apps/api alembic upgrade head --sql` — today this
-   prints only `BEGIN;`/`COMMIT;` because there are no revisions
-   (`uv run --directory apps/api alembic heads` prints nothing).
+   prints the DDL of revision `0001`
+   (`uv run --directory apps/api alembic heads` prints `0001 (head)`).
 5. Apply it yourself, when ready: `alembic upgrade head` against the target
    database. `uv run --directory apps/api alembic check` (needs a DB) reports
    model/migration drift.
@@ -484,7 +463,7 @@ Documented in `.env.example` (root) and `apps/<svc>/.env.example`:
 | `TRACE_SAMPLING_RATIO`                  | all       | 0..1 fixed-percentage trace sampling; empty ⇒ 1.0 (100%); `OTEL_TRACES_SAMPLER*` wins                                                                                                                      |
 | `TELEMETRY_AUTH_MODE`                   | all       | empty/`connection_string` (default) or `managed_identity` (Entra ID ingestion); a mistyped value disables observability **visibly** — no silent unauthenticated fallback                                   |
 | `TELEMETRY_MANAGED_IDENTITY_CLIENT_ID`  | all       | client id of a user-assigned managed identity (empty ⇒ system-assigned)                                                                                                                                    |
-| `OTEL_SERVICE_NAME`                     | all       | `ai-accelerator-web` / `-api` (defaulted in code; never overridden)                                                                                                                                        |
+| `OTEL_SERVICE_NAME`                     | all       | `team-assistant-web` / `-api` (defaulted in code; never overridden)                                                                                                                                        |
 | `DATABASE_URL`                          | api       | Azure SQL Database — `mssql+aioodbc://…?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no` (SQLAlchemy 2 async; lazy engine; never local)                                         |
 | `EXTERNAL_DATABASE_URL`                 | api       | optional read-only external Azure SQL database (empty ⇒ not configured)                                                                                                                                    |
 | `API_BASE_URL`                          | web (BFF) | → the FastAPI `api` service, e.g. `http://api:8000` (default `http://localhost:8000`). Same name as the former NestJS service's variable (retired in ADR-0003, reintroduced for the new `api` in ADR-0005) |
@@ -508,6 +487,8 @@ deploy locally to `dev` only; agents may only `bicep build`/`lint`. Roles the pr
 shared resources are **requested** (`infra/grant-request.md`), never assigned here. Nothing is
 deployed yet — the first `dev` deploy is a human step once the cloud team's manifests and
 building blocks are in. Everything else: [`infra/README.md`](infra/README.md).
-#   D i r i y a h _ T e m p l a t e _ V 0  
- #   D i r i y a h _ T e m p l a t e _ V 0  
+#   D i r i y a h * T e m p l a t e * V 0 
+ 
+ #   D i r i y a h * T e m p l a t e * V 0 
+ 
  

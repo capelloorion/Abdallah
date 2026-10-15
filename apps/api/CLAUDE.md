@@ -1,8 +1,8 @@
 # apps/api — CLAUDE.md
 
-Python 3.14 + FastAPI service for the **AI Accelerator** (the brandless starter template
+Python 3.14 + FastAPI service for the **Team Assistant** (the brandless starter template
 Orion Digital Solutions built for the Diriyah Company AI team), managed by **uv**. Port **8000**,
-trace origin **`0c70`**, OTEL service `ai-accelerator-api`. Project-wide rules and the
+trace origin **`0c70`**, OTEL service `team-assistant-api`. Project-wide rules and the
 shared `trace_id` / observability contract live in the root [CLAUDE.md](../../CLAUDE.md) and
 [README.md](../../README.md); service overview in [README.md](README.md) (this folder). Treat
 this as a starting map; read the actual files when you need detail.
@@ -11,7 +11,7 @@ this as a starting map; read the actual files when you need detail.
 
 - `main.py` — app factory + module-level `app` (so `uvicorn app.main:app` works). Bootstrap
   order: configure **structlog first** → `init_observability` (fail-safe) → `install_error_handlers`
-  + `UnhandledErrorMiddleware` → add `TraceMiddleware` (outermost) → include routers. The lifespan hook logs the degraded WARNING at startup if disabled and
+  + `UnhandledErrorMiddleware` → `RequestSizeLimitMiddleware` (`limits.py`, api:5.2) → add `TraceMiddleware` (outermost) → include routers. The lifespan hook logs the degraded WARNING at startup if disabled and
   awaits `dispose_engine()` on shutdown.
 - `routers/v1.py` — the **mandatory `/v1` business router** (`v1_router`, `prefix="/v1"`); feature
   routers attach here (ADR-0001 / rule 05). `main.py` includes it alongside `routes.py`.
@@ -41,7 +41,7 @@ this as a starting map; read the actual files when you need detail.
   **`TELEMETRY_AUTH_MODE`** (`managed_identity` → Entra ID credential; a mistyped value
   disables observability VISIBLY — rule 60 → _Ingestion auth_). See
   `.claude/rules/60-observability.md`.
-- `metrics.py` — `get_meter(scope)` (namespaced `ai-accelerator.<scope>`, no-op when degraded),
+- `metrics.py` — `get_meter(scope)` (namespaced `team-assistant.<scope>`, no-op when degraded),
   `status_class`/`resolve_target` (bounded labels), starter instruments: request-duration +
   chain-hop histograms. **Bounded attributes only** — rule 60 → _Metrics & events_.
 - `events.py` — `track_event(name, attrs)` → App Insights `customEvents` (via the
@@ -62,18 +62,32 @@ this as a starting map; read the actual files when you need detail.
   singleton**, `dispose_engine()`), `session.py` (`get_session()` FastAPI dependency — the ONLY
   way routes get a handle on the project DB), `external.py` (second lazy **read-only** engine
   for `EXTERNAL_DATABASE_URL`: `get_external_session()`, non-SELECT statements refused).
-- `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; **empty placeholder** today
-  (one commented example). Import new model modules in `models/__init__.py` so Alembic sees them.
+- `routers/conversations.py` + `repositories/conversations.py` — `/v1/conversations` (create, list, read; roadmap api:1.2). The router owns the request/response models and
+  the error mapping; the repository owns the `select(...)` queries and takes an `AsyncSession` (tests pass a fake).
+  The list is paged by an opaque keyset `cursor` (api:5.6): `Cursor` in the repository encodes the last row's `(updated_at, created_at, id)`, `decode` accepts only the exact text `encode` produces (anything else is `422`), and the query reads `limit + 1` rows to know whether `next_cursor` exists. The cursor is never logged.
+- `limits.py` — request-size and stream limits (roadmap api:5.2): `RequestSizeLimitMiddleware` (`413` over `API_MAX_REQUEST_BODY_BYTES`,
+  declared or counted), `stream_slots` (`API_MAX_CONCURRENT_STREAMS` open `/ask/stream` responses per process, `429` over it) and
+  `API_STREAM_WRITE_STALL_SECONDS`. Per-client rate limiting lives in the web BFF, not here.
+- `routers/ask.py` — `POST /v1/conversations/{id}/ask` (roadmap api:2.2): stores the question, runs
+  `app.ai.graph.ask` with the last 10 stored messages as history (human/assistant only), stores the answer
+  (`token_count` = output tokens). Bounds the answer (20,000 chars), keeps only safe relative citation paths, numbers each citation's `chunks` (the `[n]` markers; validated against the number retrieved), `413`
+  over 4,000 characters, `503 ai_unavailable` on any model/search failure or after 60 s (question kept, no answer
+  stored). The compiled graph comes from the `get_ask_graph` dependency — tests override it with fakes.
+  `POST /v1/conversations/{id}/ask/stream` (api:3.1) is the same flow as Server-Sent Events built on
+  `ai/streaming.py` `stream_events`: plain JSON errors before the first frame, an `error` frame after it, the answer
+  stored **before** `done`, nothing stored when the client leaves early.
+- `models/` — 2.0-style `Mapped[]` models subclassing `app.db.Base`; today `conversation.py`
+  (`Conversation`, `Message` — the shared chat history, ADR-0014). Import new model modules in `models/__init__.py` so Alembic sees them.
 - `../alembic/` + `../alembic.ini` — Alembic (async `env.py`, URL from `DATABASE_URL` via
-  `app.config`, never from the ini); `versions/` is **empty** — migrations are not run.
+  `app.config`, never from the ini); `versions/` holds `0001` — migrations are not run by the service or an agent.
 - `ai/` — the AI runtime (ADR-0009, rule 70): `config.py` (`AZURE_AI_*`/`AZURE_SEARCH_*`/`AI_*`),
   `client.py` (**the mock seam** — `get_chat_model()`/`get_embeddings()`, managed identity when
   deployed), `graph.py` (`build_graph()` → `retrieve → answer` LangGraph, `ask()`),
   `streaming.py` (SSE frames + `sse_response()`), `tools/` (registry; `retrieve.py` Azure AI
   Search; `query_external_db.py` allow-listed read-only SQL via `queries.py`), `prompts/`
   (files, `load_prompt`), `telemetry.py` (`model_call_span`, content-free), `ingest.py`
-  (`python -m app.ai.ingest <path>`; owns the index definition). Ships **no route** — a project
-  adds `/v1/...` routes that call it (`docs/architecture/ai.md`).
+  (`python -m app.ai.ingest <path>`; owns the index definition). The one route that calls it today is
+  `routers/ask.py`; further AI routes attach to `/v1` the same way (`docs/architecture/ai.md`).
 
 ## Conventions
 
@@ -99,7 +113,8 @@ this as a starting map; read the actual files when you need detail.
 - **Session per request** via `Depends(get_session)`; tests override it with
   `app.dependency_overrides[get_session]` and never need a database. External read-only data:
   `Depends(get_external_session)` (`EXTERNAL_DATABASE_URL`; unset ⇒ `ExternalDatabaseNotConfigured`).
-- **Alembic is wired, idle.** `alembic/versions/` is empty; the URL comes from `DATABASE_URL`
+- **Alembic is wired.** `alembic/versions/` holds revision `0001` (conversations + messages; applied
+  nowhere yet); the URL comes from `DATABASE_URL`
   through `app.config` (never `alembic.ini`). Autogenerate/`check` target the **dev** database;
   **applying is `.github/workflows/migrate.yml` (Environment-gated) or a named human** — agents
   only use offline/`heads`/`check` modes (root `CLAUDE.md` → _What you cannot do_).
@@ -115,7 +130,7 @@ uv sync
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 uv run ruff format app alembic tests && uv run ruff check app alembic tests
 uv run pytest                  # pytest + Starlette TestClient (--cov=app --cov-report=xml for coverage)
-uv run alembic heads                              # head revisions (none today)
+uv run alembic heads                              # head revisions (0001 today)
 uv run alembic upgrade head --sql                 # offline SQL for review (no DB)
 uv run alembic revision --autogenerate -m "<msg>" # needs a reachable dev DB
 uv run alembic check                              # model/migration drift (needs a DB)
